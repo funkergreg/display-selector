@@ -1,5 +1,7 @@
 using DisplaySelector.App;
 using DisplaySelector.Core;
+using DisplaySelector.Core.Audio;
+using DisplaySelector.Core.Display;
 using DisplaySelector.Core.Interop;
 using DisplaySelector.Core.Logging;
 using DisplaySelector.Core.Profiles;
@@ -33,7 +35,9 @@ internal static class Program
         {
             var profileStore = new JsonProfileStore(AppPaths.ProfilesFile, logger);
             var configStore = new JsonConfigStore(AppPaths.ConfigFile, logger);
-            using var context = new TrayApplicationContext(logger, profileStore, configStore, SurfaceMessage);
+            var audioService = new CoreAudioService(logger);
+            var displayService = new CcdDisplayService(logger);
+            using var context = new TrayApplicationContext(logger, profileStore, configStore, audioService, displayService, SurfaceMessage);
             Application.Run(context);
         }
         catch (Exception ex)

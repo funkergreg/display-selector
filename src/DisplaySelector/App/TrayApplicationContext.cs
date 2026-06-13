@@ -2,8 +2,11 @@ using System.Diagnostics;
 using System.Drawing;
 using System.Reflection;
 using DisplaySelector.Core;
+using DisplaySelector.Core.Audio;
+using DisplaySelector.Core.Display;
 using DisplaySelector.Core.Logging;
 using DisplaySelector.Core.Profiles;
+using DisplaySelector.UI;
 
 namespace DisplaySelector.App;
 
@@ -18,6 +21,8 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private readonly ILog _log;
     private readonly IProfileStore _profileStore;
     private readonly IConfigStore _configStore;
+    private readonly IAudioService _audioService;
+    private readonly IDisplayService _displayService;
     private readonly HiddenWindow _listener;
     private readonly NotifyIcon _tray;
 
@@ -28,12 +33,16 @@ internal sealed class TrayApplicationContext : ApplicationContext
         FileLogger logger,
         IProfileStore profileStore,
         IConfigStore configStore,
+        IAudioService audioService,
+        IDisplayService displayService,
         uint surfaceMessage)
     {
         _logger = logger;
         _log = logger;
         _profileStore = profileStore;
         _configStore = configStore;
+        _audioService = audioService;
+        _displayService = displayService;
 
         _config = _configStore.Load();
         _logger.Level = _config.DebugLogging ? LogLevel.Debug : LogLevel.Info;
@@ -92,6 +101,14 @@ internal sealed class TrayApplicationContext : ApplicationContext
         debugToggle.Click += (_, _) => ToggleDebugLogging(debugToggle.Checked);
         diagnostics.DropDownItems.Add(debugToggle);
 
+        var audioTest = new ToolStripMenuItem("Run audio test…");
+        audioTest.Click += (_, _) => RunAudioTest();
+        diagnostics.DropDownItems.Add(audioTest);
+
+        var displayTest = new ToolStripMenuItem("Run display test…");
+        displayTest.Click += (_, _) => RunDisplayTest();
+        diagnostics.DropDownItems.Add(displayTest);
+
         var openLogs = new ToolStripMenuItem("Open log folder");
         openLogs.Click += (_, _) => OpenLogFolder();
         diagnostics.DropDownItems.Add(openLogs);
@@ -130,6 +147,20 @@ internal sealed class TrayApplicationContext : ApplicationContext
         _configStore.Save(_config);
         _log.Info($"Debug logging {(enabled ? "enabled" : "disabled")}.");
         _tray.ShowBalloonTip(2000, "Display Selector", $"Debug logging {(enabled ? "enabled" : "disabled")}.", ToolTipIcon.Info);
+    }
+
+    private void RunAudioTest()
+    {
+        _log.Info("Opening audio test dialog.");
+        using var dialog = new AudioTestDialog(_audioService, _log);
+        dialog.ShowDialog();
+    }
+
+    private void RunDisplayTest()
+    {
+        _log.Info("Opening display test dialog.");
+        using var dialog = new DisplayTestDialog(_displayService, _log);
+        dialog.ShowDialog();
     }
 
     private void OpenLogFolder()

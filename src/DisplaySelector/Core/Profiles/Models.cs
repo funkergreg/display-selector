@@ -48,15 +48,21 @@ public sealed class DisplayConfig
 
 public sealed class DisplayTarget
 {
-    /// <summary>Port-first key (outputTechnology + connectorInstance + adapter signature).</summary>
+    /// <summary>Port-first key (outputTechnology + connectorInstance).</summary>
     public string StableId { get; set; } = string.Empty;
 
-    /// <summary>EDID-derived fallback key (manufacturer + product + serial), when available.</summary>
+    /// <summary>EDID-derived fallback key (monitor device path / manufacturer + product), when available.</summary>
     public string? Edid { get; set; }
 
     public string Friendly { get; set; } = string.Empty;
 
     public bool Primary { get; set; }
+
+    /// <summary>Descriptive only (the authoritative state lives in the CCD blob), e.g. "3840x2160".</summary>
+    public string? Resolution { get; set; }
+
+    /// <summary>Descriptive only, e.g. "Identity" / "Rotate90".</summary>
+    public string? Orientation { get; set; }
 }
 
 /// <summary>Captured default-output endpoint. We store only the device, never volume (by design).</summary>
