@@ -12,25 +12,28 @@ internal sealed class AudioTestDialog : Form
 {
     private readonly IAudioService _audio;
     private readonly ILog _log;
+    private readonly Action<AudioEndpoint>? _onAssignToProfile;
     private readonly ListBox _list = new() { Dock = DockStyle.Fill, IntegralHeight = false };
-    private readonly Button _playButton = new() { Text = "Play tone", Width = 110 };
+    private readonly Button _playButton = new() { Text = "Play tone", Width = 100 };
     private readonly Button _setDefaultButton = new() { Text = "Set as default", Width = 110 };
+    private readonly Button _assignButton = new() { Text = "Assign to profile…", Width = 130 };
     private readonly Button _refreshButton = new() { Text = "Refresh", Width = 80 };
-    private readonly Button _closeButton = new() { Text = "Close", Width = 80 };
+    private readonly Button _closeButton = new() { Text = "Close", Width = 70 };
 
     private List<AudioEndpoint> _endpoints = new();
 
-    public AudioTestDialog(IAudioService audio, ILog log)
+    public AudioTestDialog(IAudioService audio, ILog log, Action<AudioEndpoint>? onAssignToProfile = null)
     {
         _audio = audio;
         _log = log;
+        _onAssignToProfile = onAssignToProfile;
 
         Text = "Audio test";
         FormBorderStyle = FormBorderStyle.FixedDialog;
         StartPosition = FormStartPosition.CenterScreen;
         MinimizeBox = false;
         MaximizeBox = false;
-        ClientSize = new Size(460, 300);
+        ClientSize = new Size(520, 300);
 
         var buttons = new FlowLayoutPanel
         {
@@ -39,7 +42,15 @@ internal sealed class AudioTestDialog : Form
             Height = 44,
             Padding = new Padding(8),
         };
-        buttons.Controls.AddRange(new Control[] { _playButton, _setDefaultButton, _refreshButton, _closeButton });
+        buttons.Controls.Add(_playButton);
+        buttons.Controls.Add(_setDefaultButton);
+        if (_onAssignToProfile is not null)
+        {
+            buttons.Controls.Add(_assignButton);
+        }
+
+        buttons.Controls.Add(_refreshButton);
+        buttons.Controls.Add(_closeButton);
 
         var listPanel = new Panel { Dock = DockStyle.Fill, Padding = new Padding(8) };
         listPanel.Controls.Add(_list);
@@ -49,6 +60,7 @@ internal sealed class AudioTestDialog : Form
 
         _playButton.Click += (_, _) => PlaySelected();
         _setDefaultButton.Click += (_, _) => SetSelectedAsDefault();
+        _assignButton.Click += (_, _) => AssignSelectedToProfile();
         _refreshButton.Click += (_, _) => LoadDevices();
         _closeButton.Click += (_, _) => Close();
 
@@ -72,6 +84,15 @@ internal sealed class AudioTestDialog : Form
         var any = _endpoints.Count > 0;
         _playButton.Enabled = any;
         _setDefaultButton.Enabled = any;
+        _assignButton.Enabled = any;
+    }
+
+    private void AssignSelectedToProfile()
+    {
+        if (Selected is { } endpoint)
+        {
+            _onAssignToProfile?.Invoke(endpoint);
+        }
     }
 
     private AudioEndpoint? Selected =>

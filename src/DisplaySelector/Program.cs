@@ -1,7 +1,9 @@
 using DisplaySelector.App;
 using DisplaySelector.Core;
+using DisplaySelector.Core.Activation;
 using DisplaySelector.Core.Audio;
 using DisplaySelector.Core.Display;
+using DisplaySelector.Core.Hotkeys;
 using DisplaySelector.Core.Interop;
 using DisplaySelector.Core.Logging;
 using DisplaySelector.Core.Profiles;
@@ -37,7 +39,10 @@ internal static class Program
             var configStore = new JsonConfigStore(AppPaths.ConfigFile, logger);
             var audioService = new CoreAudioService(logger);
             var displayService = new CcdDisplayService(logger);
-            using var context = new TrayApplicationContext(logger, profileStore, configStore, audioService, displayService, SurfaceMessage);
+            var activator = new ProfileActivator(displayService, audioService, logger);
+            using var hotkeyService = new HotkeyService(logger);
+            using var context = new TrayApplicationContext(
+                logger, profileStore, configStore, audioService, displayService, hotkeyService, activator, SurfaceMessage);
             Application.Run(context);
         }
         catch (Exception ex)

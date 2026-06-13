@@ -286,17 +286,24 @@ To be created on approval. It will document, concisely:
 
 ## 10. Proposed milestones (post-approval)
 
-1. **M0 – Scaffold:** repo, csproj, tray shell that runs idle, logger, JSON store (atomic write + `.bak`), **xUnit test project**, CLAUDE.md, build script + installer skeleton.
-2. **M1 – Audio:** enumerate/capture/apply default device (all roles) + confirmation sound. Unit + integration tests; **Diagnostics ▸ Run audio test**.
-3. **M2 – Display:** CCD capture/apply with port-first/EDID remapping; topology/primary/resolution/orientation. Fixture-blob unit tests; **Diagnostics ▸ Run display test**.
-4. **M3 – Profiles + hotkeys:** save/rename/delete, hotkey mapping + conflict detection, activation orchestration (with full feedback matrix §6.2).
-5. **M4 – Notifications + auto-start + tray UX polish** (active-profile indicator, Diagnostics submenu, debug-logging toggle).
-6. **M5 – Installer + uninstall cleanup (AppData purge) + README + release binaries.**
-7. **Stretch:** per-display scale/DPI; resolution/orientation editing; pre-CCD fallback; CI workflow for tier-1 tests.
+1. **M0 – Scaffold:** ✅ repo, csproj, tray shell that runs idle, logger, JSON store (atomic write + `.bak`), **xUnit test project**, CLAUDE.md, build script + installer skeleton.
+2. **M1 – Audio:** ✅ enumerate/capture/apply default device (all roles) + confirmation sound. Unit + integration tests; **Diagnostics ▸ Run audio test**.
+3. **M2 – Display:** ✅ CCD capture/apply with port-first/EDID remapping; topology/primary/resolution/orientation. Struct-size + blob unit tests; **Diagnostics ▸ Run display test**. (Cross-reboot remap exercised in M3 activation.)
+4. **M3 – Profiles + hotkeys:** ✅ save/rename/delete, hotkey mapping + conflict detection, activation orchestration (full feedback matrix §6.2). Validated end-to-end on real hardware incl. both unstick cases (re-apply current + powered-off TV).
+5. **M3.5 – Audio enhancements** *(added from M3 feedback)*:
+   - **Per-profile audio editing** — Manage profiles ▸ *Set audio device…* to change a profile's default-output endpoint without recapturing the whole profile.
+   - **Audio-only profiles** — a profile with **no display change** (`Display == null`) switches only the default device; `ProfileActivator` already supports this, so an **audio-only hotkey toggle** falls out for free. Add a *Save current audio device as profile* path and/or let a profile be audio-only.
+   - **Assign-to-profile from the audio test dialog** — set the selected device into a chosen profile from *Run audio test…*.
+6. **M4 – Notifications + auto-start + tray UX polish** (real Win11 toasts + tray icon from `assets/`, HKCU Run auto-start, **background-thread activation** if switching ever feels sluggish).
+7. **M5 – Installer + uninstall cleanup (AppData purge) + README (banner) + release binaries.**
+8. **Stretch / deferred:**
+   - **Confirmation-tone timing for waking-from-standby devices** *(from M3 feedback, low priority)* — the tone can fire before a TV/optical link is awake and be lost; consider a delayed/retried tone. Other paths verify sound, so deferred.
+   - Per-display scale/DPI; resolution/orientation editing; pre-CCD fallback; CI workflow for tier-1 tests.
 
 ---
 
 ## 11. Changelog
+- **v0.4** — M0–M3 delivered + validated on hardware. Menu hotkey label changed to `Name : Hotkey`. Added **M3.5 audio enhancements** (per-profile audio editing, audio-only profiles + audio-only hotkey toggle, assign-device-to-profile from audio test) and deferred **confirmation-tone-timing** enhancement — all from M3 feedback.
 - **v0.3** — UI completeness audit: full **action→reachability→feedback matrix** (§6.2), every command reachable from the tray menu, no silent state changes, confirmation tone reserved for audio changes, active-profile/"Custom (unsaved)" indicator, idempotent re-apply as the "unstick" fix. Added **Diagnostics submenu** (§6.3: debug-logging toggle, human-in-the-loop audio/display tests, copy diagnostics). Durable atomic store writes + `.bak`. Expanded load/save + debug-level data-shape logging (§5.6). New **three-tier testing strategy** (§8.1) and build/test cycle; added `run-tests` skill and test milestones.
 - **v0.2** — Display identity changed to **port-first, EDID-fallback** hybrid (follows fixed cabling, reduces connector wear); documented HPD/EDID-drop hardware limit. Corrected hotkey conflict model (`RegisterHotKey` can't override others — detect/fail + reassign-within-app + reserved-combo blocklist). Resolved (3) best-effort apply and (4) leave window-location setting to OS.
 - **v0.1** — Initial draft from planning Q&A (framework, packaging, hotkeys, display scope, auto-start, notifications, audio scope, logging all decided).
