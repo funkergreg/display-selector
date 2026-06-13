@@ -115,7 +115,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
             foreach (var profile in _document.Profiles)
             {
                 var label = profile.Hotkey is null
-                    ? profile.Name
+                    ? $"{profile.Name} : No Hotkey"
                     : $"{profile.Name} : {HotkeyCodec.Format(profile.Hotkey)}";
                 var item = new ToolStripMenuItem(label)
                 {
@@ -438,65 +438,82 @@ internal sealed class TrayApplicationContext : ApplicationContext
             return;
         }
 
-        using var dialog = new HotkeyCaptureDialog(profile.Hotkey);
-        if (dialog.ShowDialog() != DialogResult.OK)
-        {
-            return;
-        }
+        // Free our global hotkeys while capturing so the keypress reaches the dialog itself,
+        // instead of an already-registered hotkey firing and activating another profile.
+        _hotkeyService.UnregisterAll();
+        _hotkeyIdToProfileId.Clear();
 
-        var binding = dialog.Binding;
-
-        // Clear the hotkey.
-        if (binding is null)
+        string? balloon = null;
+        try
         {
-            profile.Hotkey = null;
+            using var dialog = new HotkeyCaptureDialog(profile.Hotkey);
+            if (dialog.ShowDialog() != DialogResult.OK)
+            {
+                return;
+            }
+
+            var binding = dialog.Binding;
+
+            // Clear the hotkey.
+            if (binding is null)
+            {
+                profile.Hotkey = null;
+                _profileStore.Save(_document);
+                balloon = $"Cleared hotkey for '{profile.Name}'.";
+                return;
+            }
+
+            if (HotkeyCodec.IsRisky(binding))
+            {
+                var proceed = MessageBox.Show(
+                    $"'{HotkeyCodec.Format(binding)}' has no modifier and may interfere with normal typing. Use it anyway?",
+                    "Risky hotkey",
+                    MessageBoxButtons.OKCancel,
+                    MessageBoxIcon.Warning);
+                if (proceed != DialogResult.OK)
+                {
+                    return;
+                }
+            }
+
+            // Intra-app conflict: another profile already uses this combo.
+            var clash = _document.Profiles.FirstOrDefault(
+                p => p.Id != id && p.Hotkey is not null && HotkeyCodec.Format(p.Hotkey) == HotkeyCodec.Format(binding));
+            if (clash is not null)
+            {
+                var reassign = MessageBox.Show(
+                    $"'{HotkeyCodec.Format(binding)}' is already assigned to '{clash.Name}'. Move it to '{profile.Name}'?",
+                    "Hotkey in use",
+                    MessageBoxButtons.OKCancel,
+                    MessageBoxIcon.Question);
+                if (reassign != DialogResult.OK)
+                {
+                    return;
+                }
+
+                clash.Hotkey = null;
+            }
+
+            profile.Hotkey = binding;
             _profileStore.Save(_document);
+            balloon = $"Set hotkey for '{profile.Name}' to {HotkeyCodec.Format(binding)}.";
+        }
+        finally
+        {
+            // Always restore registrations (including any new/changed binding).
             RegisterAllHotkeys();
-            RebuildMenu();
-            ShowBalloon($"Cleared hotkey for '{profile.Name}'.", ToolTipIcon.Info);
-            return;
         }
 
-        if (HotkeyCodec.IsRisky(binding))
+        if (balloon is null)
         {
-            var proceed = MessageBox.Show(
-                $"'{HotkeyCodec.Format(binding)}' has no modifier and may interfere with normal typing. Use it anyway?",
-                "Risky hotkey",
-                MessageBoxButtons.OKCancel,
-                MessageBoxIcon.Warning);
-            if (proceed != DialogResult.OK)
-            {
-                return;
-            }
+            return; // cancelled or declined — nothing changed
         }
 
-        // Intra-app conflict: another profile already uses this combo.
-        var clash = _document.Profiles.FirstOrDefault(
-            p => p.Id != id && p.Hotkey is not null && HotkeyCodec.Format(p.Hotkey) == HotkeyCodec.Format(binding));
-        if (clash is not null)
-        {
-            var reassign = MessageBox.Show(
-                $"'{HotkeyCodec.Format(binding)}' is already assigned to '{clash.Name}'. Move it to '{profile.Name}'?",
-                "Hotkey in use",
-                MessageBoxButtons.OKCancel,
-                MessageBoxIcon.Question);
-            if (reassign != DialogResult.OK)
-            {
-                return;
-            }
-
-            clash.Hotkey = null;
-        }
-
-        profile.Hotkey = binding;
-        _profileStore.Save(_document);
-
-        // Re-register everything, then check this profile's hotkey actually took (external conflict).
-        RegisterAllHotkeys();
-        if (!_hotkeyIdToProfileId.ContainsValue(profile.Id))
+        // The just-assigned hotkey may have failed to register (owned by another app).
+        if (profile.Hotkey is not null && !_hotkeyIdToProfileId.ContainsValue(profile.Id))
         {
             MessageBox.Show(
-                $"'{HotkeyCodec.Format(binding)}' could not be registered — another application is already using it. " +
+                $"'{HotkeyCodec.Format(profile.Hotkey)}' could not be registered — another application is already using it. " +
                 "The hotkey is saved but inactive; choose a different combination.",
                 "Hotkey unavailable",
                 MessageBoxButtons.OK,
@@ -504,7 +521,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         }
 
         RebuildMenu();
-        ShowBalloon($"Set hotkey for '{profile.Name}' to {HotkeyCodec.Format(binding)}.", ToolTipIcon.Info);
+        ShowBalloon(balloon, ToolTipIcon.Info);
     }
 
     // ---- Hotkeys -------------------------------------------------------------------------------

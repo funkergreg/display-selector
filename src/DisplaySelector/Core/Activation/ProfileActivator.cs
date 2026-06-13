@@ -48,14 +48,21 @@ public sealed class ProfileActivator
 
         if (profile.Audio is { } audio && !string.IsNullOrEmpty(audio.EndpointId))
         {
-            if (_audio.SetDefaultOutputDevice(audio.EndpointId))
+            if (!_audio.SetDefaultOutputDevice(audio.EndpointId))
             {
+                success = false;
+                messages.Add($"Audio device '{audio.FriendlyName}' could not be selected.");
+            }
+            else if (_audio.GetDefaultOutputDevice()?.Id == audio.EndpointId)
+            {
+                // Confirmed it actually became the active default — safe to play the tone on it.
                 _audio.PlayConfirmation(audio.EndpointId);
             }
             else
             {
-                success = false;
-                messages.Add($"Audio device '{audio.FriendlyName}' could not be selected.");
+                // Set succeeded but the endpoint isn't currently available (e.g. TV/soundbar powered off).
+                // Keep it selected (Windows routes to it once ready); don't play the tone on the old device.
+                messages.Add($"Audio device '{audio.FriendlyName}' isn't available yet; it will be used once it's ready.");
             }
         }
 

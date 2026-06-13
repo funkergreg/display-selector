@@ -19,7 +19,7 @@ internal sealed class HotkeyCaptureDialog : Form
     };
 
     private readonly Button _ok = new() { Text = "OK", Width = 80, Enabled = false };
-    private readonly Button _clear = new() { Text = "Clear", Width = 80 };
+    private readonly Button _clear = new() { Text = "Clear Hotkey", Width = 100 };
     private readonly Button _cancel = new() { Text = "Cancel", DialogResult = DialogResult.Cancel, Width = 80 };
 
     public HotkeyCaptureDialog(HotkeyBinding? current)

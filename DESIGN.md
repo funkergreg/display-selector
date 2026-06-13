@@ -294,7 +294,7 @@ To be created on approval. It will document, concisely:
    - **Per-profile audio editing** — Manage profiles ▸ *Set audio device…* to change a profile's default-output endpoint without recapturing the whole profile.
    - **Audio-only profiles** — a profile with **no display change** (`Display == null`) switches only the default device; `ProfileActivator` already supports this, so an **audio-only hotkey toggle** falls out for free. Add a *Save current audio device as profile* path and/or let a profile be audio-only.
    - **Assign-to-profile from the audio test dialog** — set the selected device into a chosen profile from *Run audio test…*.
-6. **M4 – Notifications + auto-start + tray UX polish** (real Win11 toasts + tray icon from `assets/`, HKCU Run auto-start, **background-thread activation** if switching ever feels sluggish).
+6. **M4 – Notifications + auto-start + tray UX polish** (real Win11 toasts + tray icon from `assets/`, HKCU Run auto-start, **background-thread activation** if switching ever feels sluggish). **Notification replacement:** use a fixed tag/group so each new activation toast *replaces* the previous one (and clear prior app notifications) to avoid the Win11 notification-queue lag observed in M3.5.
 7. **M5 – Installer + uninstall cleanup (AppData purge) + README (banner) + release binaries.**
 8. **Stretch / deferred:**
    - **Confirmation-tone timing for waking-from-standby devices** *(from M3 feedback, low priority)* — the tone can fire before a TV/optical link is awake and be lost; consider a delayed/retried tone. Other paths verify sound, so deferred.

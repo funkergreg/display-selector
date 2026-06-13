@@ -68,6 +68,20 @@ public class ProfileActivatorTests
     }
 
     [Fact]
+    public void Audio_set_but_not_active_reports_message_and_skips_tone()
+    {
+        // Models the powered-off TV/soundbar: the set call "succeeds" but the endpoint isn't actually active.
+        var display = new FakeDisplayService { ApplyResult = DisplayApplyResult.Ok() };
+        var audio = new FakeAudioService { SetResult = true, SimulateAvailable = false };
+
+        var result = new ProfileActivator(display, audio, new NullLog()).Activate(FullProfile());
+
+        Assert.True(result.Success); // best-effort: kept set, will apply when ready
+        Assert.Contains(result.Messages, m => m.Contains("isn't available yet"));
+        Assert.Null(audio.LastPlayedId); // must not play the tone on the old device
+    }
+
+    [Fact]
     public void Audio_only_profile_switches_audio_and_skips_display()
     {
         var display = new FakeDisplayService { ApplyResult = DisplayApplyResult.Ok() };
@@ -130,7 +144,12 @@ public class ProfileActivatorTests
 
     private sealed class FakeAudioService : IAudioService
     {
+        private AudioEndpoint? _current;
+
         public bool SetResult { get; set; } = true;
+
+        /// <summary>When false, a successful set does NOT become the active default (device powered off).</summary>
+        public bool SimulateAvailable { get; set; } = true;
 
         public string? LastSetId { get; private set; }
 
@@ -138,11 +157,16 @@ public class ProfileActivatorTests
 
         public IReadOnlyList<AudioEndpoint> GetOutputDevices() => Array.Empty<AudioEndpoint>();
 
-        public AudioEndpoint? GetDefaultOutputDevice() => null;
+        public AudioEndpoint? GetDefaultOutputDevice() => _current;
 
         public bool SetDefaultOutputDevice(string endpointId)
         {
             LastSetId = endpointId;
+            if (SetResult && SimulateAvailable)
+            {
+                _current = new AudioEndpoint(endpointId, "device", true);
+            }
+
             return SetResult;
         }
 
