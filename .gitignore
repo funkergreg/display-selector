@@ -1,0 +1,16 @@
+# Build output
+bin/
+obj/
+publish/
+
+# Installer output
+installer/Output/
+
+# IDE
+.vs/
+*.user
+*.suo
+
+# OS
+[Tt]humbs.db
+desktop.ini

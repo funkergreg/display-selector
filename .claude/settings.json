@@ -1,7 +1,9 @@
 {
   "permissions": {
     "allow": [
-      "WebSearch"
+      "WebSearch",
+      "Edit(/.claude/skills/build-release/**)",
+      "Edit(/.claude/skills/run-tests/**)"
     ]
   }
 }
