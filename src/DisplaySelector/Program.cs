@@ -7,6 +7,7 @@ using DisplaySelector.Core.Hotkeys;
 using DisplaySelector.Core.Interop;
 using DisplaySelector.Core.Logging;
 using DisplaySelector.Core.Profiles;
+using DisplaySelector.Core.Startup;
 
 namespace DisplaySelector;
 
@@ -40,9 +41,10 @@ internal static class Program
             var audioService = new CoreAudioService(logger);
             var displayService = new CcdDisplayService(logger);
             var activator = new ProfileActivator(displayService, audioService, logger);
+            var autoStart = new RunKeyAutoStart(logger);
             using var hotkeyService = new HotkeyService(logger);
             using var context = new TrayApplicationContext(
-                logger, profileStore, configStore, audioService, displayService, hotkeyService, activator, SurfaceMessage);
+                logger, profileStore, configStore, audioService, displayService, hotkeyService, activator, autoStart, SurfaceMessage);
             Application.Run(context);
         }
         catch (Exception ex)

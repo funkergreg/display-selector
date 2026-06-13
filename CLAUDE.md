@@ -9,7 +9,7 @@ A lightweight, mostly-idle **Windows 11** system-tray utility (personal use, ope
 - **Do NOT `git commit` or `git push`.** The developer does all commits/pushes as a QC step. You may run read-only git (`status`, `diff`, `log`).
 - **Windows 11 only** is the test target. Keep code portable (platform behind interfaces) but don't spend effort on other-OS/older-Windows support unless asked.
 - **Platform code lives behind an interface.** Anything touching Win32/COM goes behind `IDisplayService` / `IAudioService` / `IHotkeyService` / `INotificationService` / `IAutoStartManager` / `ILog`, so it stays mockable and swappable.
-- Prefer few dependencies. Current allowed set: **NAudio** (audio enumeration + WASAPI test playback) and **CommunityToolkit** notifications (toasts). Logger is hand-rolled. Clear new dependencies with the developer first.
+- Prefer few dependencies. Current allowed set: **NAudio** (audio enumeration + WASAPI test playback) and **Microsoft.Toolkit.Uwp.Notifications** (Win11 toasts via the unpackaged compat layer). Logger is hand-rolled. Clear new dependencies with the developer first.
 
 ## Commands
 > Project is scaffolded in M0; these are the intended commands.
@@ -50,7 +50,7 @@ Profile **activation** is one orchestrated sequence in the controller: log → a
 - **Uninstall must purge everything** under `%LOCALAPPDATA%\DisplaySelector\` and remove the `Run` key — the Inno uninstaller handles this.
 
 ## Conventions
-- .NET 10 (`net10.0-windows`), WinForms; nullable enabled; file-scoped namespaces; `async` only where it earns its keep (this app is mostly synchronous + event-driven).
+- .NET 10 (`net10.0-windows10.0.19041.0` — the Windows-SDK TFM unlocks the WinRT toast projections), WinForms; nullable enabled; file-scoped namespaces; `async` only where it earns its keep (this app is mostly synchronous + event-driven).
 - Every capability must be reachable from the tray menu (hotkeys are accelerators only). No silent state changes — every action gives visual feedback; the **confirmation tone is reserved for audio-device changes**.
 - Single instance enforced via a named `Mutex`; second launch surfaces the existing menu and exits.
 - Toasts (unpackaged app) require a registered AppUserModelID + Start Menu shortcut (installer creates the shortcut; app registers AUMID on first run). Fall back to tray balloon if toast registration fails.

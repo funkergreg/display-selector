@@ -7,7 +7,9 @@ using DisplaySelector.Core.Audio;
 using DisplaySelector.Core.Display;
 using DisplaySelector.Core.Hotkeys;
 using DisplaySelector.Core.Logging;
+using DisplaySelector.Core.Notifications;
 using DisplaySelector.Core.Profiles;
+using DisplaySelector.Core.Startup;
 using DisplaySelector.UI;
 
 namespace DisplaySelector.App;
@@ -29,6 +31,8 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private readonly IDisplayService _displayService;
     private readonly IHotkeyService _hotkeyService;
     private readonly ProfileActivator _activator;
+    private readonly IAutoStartManager _autoStart;
+    private readonly INotificationService _notifications;
     private readonly HiddenWindow _listener;
     private readonly NotifyIcon _tray;
 
@@ -46,6 +50,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         IDisplayService displayService,
         IHotkeyService hotkeyService,
         ProfileActivator activator,
+        IAutoStartManager autoStart,
         uint surfaceMessage)
     {
         _logger = logger;
@@ -56,6 +61,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         _displayService = displayService;
         _hotkeyService = hotkeyService;
         _activator = activator;
+        _autoStart = autoStart;
 
         _config = _configStore.Load();
         _logger.Level = _config.DebugLogging ? LogLevel.Debug : LogLevel.Info;
@@ -68,10 +74,13 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
         _tray = new NotifyIcon
         {
-            Icon = SystemIcons.Application, // TODO(M4): replace with assets/icon.ico
+            Icon = LoadTrayIcon(),
             Visible = true,
             Text = "Display Selector",
         };
+
+        // Toasts replace the previous one (no queue lag); fall back to a tray balloon if unavailable.
+        _notifications = new ToastNotificationService(_log, ShowBalloonRaw);
         _tray.MouseClick += (_, e) =>
         {
             if (e.Button == MouseButtons.Left)
@@ -140,7 +149,13 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
         menu.Items.Add(BuildDiagnosticsMenu());
 
-        menu.Items.Add(Stub("Start with Windows", "M4"));
+        var startup = new ToolStripMenuItem("Start with Windows")
+        {
+            Checked = _autoStart.IsEnabled(),
+            CheckOnClick = true,
+        };
+        startup.Click += (_, _) => ToggleAutoStart(startup.Checked);
+        menu.Items.Add(startup);
 
         menu.Items.Add(new ToolStripSeparator());
 
@@ -218,17 +233,6 @@ internal sealed class TrayApplicationContext : ApplicationContext
         diagnostics.DropDownItems.Add(openLogs);
 
         return diagnostics;
-    }
-
-    private ToolStripMenuItem Stub(string text, string milestone)
-    {
-        var item = new ToolStripMenuItem(text);
-        item.Click += (_, _) =>
-        {
-            _log.Info($"Stub invoked: '{text}' (planned {milestone}).");
-            ShowBalloon($"'{text}' is coming in {milestone}.", ToolTipIcon.Info);
-        };
-        return item;
     }
 
     // ---- Profile operations --------------------------------------------------------------------
@@ -665,8 +669,55 @@ internal sealed class TrayApplicationContext : ApplicationContext
         showContextMenu?.Invoke(_tray, null);
     }
 
+    private void ToggleAutoStart(bool enabled)
+    {
+        if (enabled)
+        {
+            _autoStart.Enable();
+        }
+        else
+        {
+            _autoStart.Disable();
+        }
+
+        _config.AutoStart = _autoStart.IsEnabled();
+        _configStore.Save(_config);
+        ShowBalloon(
+            _config.AutoStart ? "Display Selector will start with Windows." : "Display Selector will not start with Windows.",
+            ToolTipIcon.Info);
+    }
+
+    private static Icon LoadTrayIcon()
+    {
+        try
+        {
+            var assembly = Assembly.GetExecutingAssembly();
+            var resource = assembly.GetManifestResourceNames()
+                .FirstOrDefault(n => n.EndsWith("app.ico", StringComparison.OrdinalIgnoreCase));
+            if (resource is not null)
+            {
+                using var stream = assembly.GetManifestResourceStream(resource);
+                if (stream is not null)
+                {
+                    return new Icon(stream, SystemInformation.SmallIconSize);
+                }
+            }
+        }
+        catch
+        {
+            // Fall back to a stock icon if the embedded .ico can't be loaded.
+        }
+
+        return SystemIcons.Application;
+    }
+
+    // Shows a notification (toast, replacing the previous one), keeping the ToolTipIcon-based call sites.
     private void ShowBalloon(string message, ToolTipIcon icon) =>
-        _tray.ShowBalloonTip(2500, "Display Selector", message, icon);
+        _notifications.Show(message, icon == ToolTipIcon.Warning ? NotificationLevel.Warning : NotificationLevel.Info);
+
+    // The literal tray balloon — used only as the toast fallback.
+    private void ShowBalloonRaw(string message, NotificationLevel level) =>
+        _tray.ShowBalloonTip(2500, "Display Selector", message, level == NotificationLevel.Warning ? ToolTipIcon.Warning : ToolTipIcon.Info);
 
     private static string Truncate(string value, int max) =>
         value.Length <= max ? value : value[..max];
