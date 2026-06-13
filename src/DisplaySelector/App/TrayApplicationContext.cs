@@ -454,12 +454,13 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
             var binding = dialog.Binding;
 
-            // Clear the hotkey.
+            // Clear the hotkey. (Rebuild + notify inline: the shared bottom block is skipped by this return.)
             if (binding is null)
             {
                 profile.Hotkey = null;
                 _profileStore.Save(_document);
-                balloon = $"Cleared hotkey for '{profile.Name}'.";
+                RebuildMenu();
+                ShowBalloon($"Cleared hotkey for '{profile.Name}'.", ToolTipIcon.Info);
                 return;
             }
 
