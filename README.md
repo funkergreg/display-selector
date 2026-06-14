@@ -5,14 +5,14 @@
 A lightweight **Windows 11** system-tray utility that captures current **display layout + audio device** as a named `Profile` and binds to a **global hotkey**, enabling switching display and/or sound to a with one keypress.
 
 > [!TIP]
-> Yes, sound can be switched independently of any display profile!
+> Yes, **sound** can be switched independently of any **display** profile!
 
 ## Why
 
 One PC, several setups — e.g. a multi-monitor desk, a single TV for couch gaming with a soundbar, a single desk monitor with PC speakers. Switching between them in Windows-default tooling means juggling the main display, the sound device, and powering panels on/off.
 
 > [!TIP]
-> **Display Selector** makes changes via **one hotkey** while application is running
+> **Display Selector** makes changes via **one hotkey** while the ![DS](assets/display-selector-icon-16x16.png) application is running
 
 ## Features
 
@@ -31,7 +31,10 @@ One PC, several setups — e.g. a multi-monitor desk, a single TV for couch gami
 
 ## Install
 
-Download `DisplaySelectorSetup.exe` from [Releases](../../releases) and run it. It's a **per-user** install (no admin needed). The app is unsigned, so Windows SmartScreen may warn — choose *More info → Run anyway*.
+Download `DisplaySelectorSetup.exe` from [Releases](https://github.com/funkergreg/display-selector/releases) and run it. It's a **per-user** install (no admin needed). 
+
+> ![NOTE]
+> The app is unsigned, so Windows SmartScreen may warn — choose *More info → Run anyway*.
 
 To uninstall: **Settings ▸ Apps ▸ Installed apps ▸ Display Selector ▸ Uninstall**. This removes the app, the *Start with Windows* entry, and **all data** under `%LOCALAPPDATA%\DisplaySelector` (profiles, config, logs).
 
@@ -39,20 +42,19 @@ To uninstall: **Settings ▸ Apps ▸ Installed apps ▸ Display Selector ▸ Un
 
 The app lives in the system tray. **click the ![DS](assets/display-selector-icon-16x16.png) icon** for the menu:
 
-1. Arrange your displays + pick your audio device the way you want them.
-2. **Save current settings as new profile…** → name it. It auto-assigns the next free F-key (F9–F12).
+1. Arrange your displays + set your audio device the way you want them.
+2. **Save current settings as new profile…** → name the `Profile`. It auto-assigns the next free F-key (F9–F12).
 3. Press the hotkey (or click the profile) anytime to switch back to that setup.
 4. Use **Manage profiles** to rename, delete, or change a profile's hotkey/audio device.
 
 Hotkeys are accelerators only — everything is reachable from the menu.
 
 > [!TIP]
-> `Run when Windows Starts` is enabled by default after install since this needs to be in the system tray to work,
-> but this can be turned off in the manu
+> `Run when Windows Starts` is enabled by default after install since this needs to be in the system tray to work, but this can be turned off in the ![DS](assets/display-selector-icon-16x16.png) menu
 
 ## Build from source
 
-Requires the **.NET 10 SDK**. (Building the installer additionally needs [**Inno Setup 6**](https://jrsoftware.org/isdl.php/Inno-Setup-Downloads) on `PATH` or in its default location.)
+Project is [open-source on GitHub](https://github.com/funkergreg/display-selector).  Building requires the **.NET 10 SDK**.  Building the installer additionally needs [**Inno Setup 6**](https://jrsoftware.org/isdl.php/Inno-Setup-Downloads) on `PATH` or in its default location.
 
 ```pwsh
 dotnet build                                            # build
