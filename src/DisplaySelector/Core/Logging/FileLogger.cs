@@ -55,8 +55,18 @@ public sealed class FileLogger : ILog
         var bytes = Encoding.UTF8.GetByteCount(line);
         lock (_gate)
         {
-            RollIfNeeded(bytes);
-            File.AppendAllText(_currentFile, line, Encoding.UTF8);
+            try
+            {
+                // Recreate the directory if it vanished (e.g. uninstall deleted it while running),
+                // and never let a logging failure crash the app.
+                Directory.CreateDirectory(_directory);
+                RollIfNeeded(bytes);
+                File.AppendAllText(_currentFile, line, Encoding.UTF8);
+            }
+            catch
+            {
+                // Logging is best-effort; swallow IO errors.
+            }
         }
     }
 

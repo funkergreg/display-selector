@@ -12,7 +12,7 @@ Produce a release build + installer for Display Selector. Prefer the `build/buil
    - .NET 10 SDK: `dotnet --version`
    - Inno Setup compiler `iscc.exe` on PATH (or at the usual `C:\Program Files (x86)\Inno Setup 6\ISCC.exe`).
 2. **Run the pipeline:**
-   - Preferred: `pwsh build/build.ps1`
+   - Preferred: `powershell -ExecutionPolicy Bypass -File build/build.ps1` (or `pwsh build/build.ps1` if PowerShell 7 is installed)
    - The script runs, in order: unit tests (`Category!=Integration`) → `dotnet publish -c Release -r win-x64 --self-contained` (single-file) → `iscc installer/setup.iss`.
    - Useful flags: `-SkipTests` (fast package), `-IncludeIntegration` (also run tier-2 tests — requires a desktop session).
 3. **If `build/build.ps1` does not exist yet** (early in M0), do it manually:

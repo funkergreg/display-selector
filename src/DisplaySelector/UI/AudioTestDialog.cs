@@ -29,6 +29,7 @@ internal sealed class AudioTestDialog : Form
         _onAssignToProfile = onAssignToProfile;
 
         Text = "Audio test";
+        Icon = AppIcon.Window;
         FormBorderStyle = FormBorderStyle.FixedDialog;
         StartPosition = FormStartPosition.CenterScreen;
         MinimizeBox = false;

@@ -12,6 +12,7 @@ internal sealed class ListPickerDialog<T> : Form
         _items = items;
 
         Text = title;
+        Icon = AppIcon.Window;
         FormBorderStyle = FormBorderStyle.FixedDialog;
         StartPosition = FormStartPosition.CenterScreen;
         MinimizeBox = false;

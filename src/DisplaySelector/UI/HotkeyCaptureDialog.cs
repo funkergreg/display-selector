@@ -25,6 +25,7 @@ internal sealed class HotkeyCaptureDialog : Form
     public HotkeyCaptureDialog(HotkeyBinding? current)
     {
         Text = "Set hotkey";
+        Icon = AppIcon.Window;
         FormBorderStyle = FormBorderStyle.FixedDialog;
         StartPosition = FormStartPosition.CenterScreen;
         MinimizeBox = false;

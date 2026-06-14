@@ -74,9 +74,9 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
         _tray = new NotifyIcon
         {
-            Icon = LoadTrayIcon(),
+            Icon = AppIcon.Tray,
             Visible = true,
-            Text = "Display Selector",
+            Text = AppIdentity.AppName,
         };
 
         // Toasts replace the previous one (no queue lag); fall back to a tray balloon if unavailable.
@@ -198,6 +198,17 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
             sub.DropDownItems.Add(new ToolStripSeparator());
 
+            var index = _document.Profiles.IndexOf(profile);
+            var moveUp = new ToolStripMenuItem("Move up") { Enabled = index > 0 };
+            moveUp.Click += (_, _) => MoveProfile(id, -1);
+            sub.DropDownItems.Add(moveUp);
+
+            var moveDown = new ToolStripMenuItem("Move down") { Enabled = index < _document.Profiles.Count - 1 };
+            moveDown.Click += (_, _) => MoveProfile(id, +1);
+            sub.DropDownItems.Add(moveDown);
+
+            sub.DropDownItems.Add(new ToolStripSeparator());
+
             var delete = new ToolStripMenuItem("Delete…");
             delete.Click += (_, _) => DeleteProfile(id);
             sub.DropDownItems.Add(delete);
@@ -227,6 +238,10 @@ internal sealed class TrayApplicationContext : ApplicationContext
         var displayTest = new ToolStripMenuItem("Run display test…");
         displayTest.Click += (_, _) => RunDisplayTest();
         diagnostics.DropDownItems.Add(displayTest);
+
+        var copyDiagnostics = new ToolStripMenuItem("Copy diagnostics");
+        copyDiagnostics.Click += (_, _) => CopyDiagnostics();
+        diagnostics.DropDownItems.Add(copyDiagnostics);
 
         var openLogs = new ToolStripMenuItem("Open log folder");
         openLogs.Click += (_, _) => OpenLogFolder();
@@ -386,6 +401,27 @@ internal sealed class TrayApplicationContext : ApplicationContext
         _profileStore.Save(_document);
         RebuildMenu();
         ShowBalloon($"Set '{endpoint.FriendlyName}' on profile '{profile.Name}'.", ToolTipIcon.Info);
+    }
+
+    private void MoveProfile(string id, int delta)
+    {
+        var index = _document.Profiles.FindIndex(p => p.Id == id);
+        if (index < 0)
+        {
+            return;
+        }
+
+        var newIndex = index + delta;
+        if (newIndex < 0 || newIndex >= _document.Profiles.Count)
+        {
+            return;
+        }
+
+        var profile = _document.Profiles[index];
+        _document.Profiles.RemoveAt(index);
+        _document.Profiles.Insert(newIndex, profile);
+        _profileStore.Save(_document);
+        RebuildMenu();
     }
 
     private void RenameProfile(string id)
@@ -641,6 +677,22 @@ internal sealed class TrayApplicationContext : ApplicationContext
         dialog.ShowDialog();
     }
 
+    private void CopyDiagnostics()
+    {
+        try
+        {
+            var report = DiagnosticsReport.Build(_displayService, _audioService);
+            Clipboard.SetText(report);
+            _log.Info("Copied diagnostics to clipboard.");
+            ShowBalloon("Diagnostics copied to clipboard.", ToolTipIcon.Info);
+        }
+        catch (Exception ex)
+        {
+            _log.Error("Failed to copy diagnostics.", ex);
+            ShowBalloon("Couldn't copy diagnostics — see the log.", ToolTipIcon.Warning);
+        }
+    }
+
     private void OpenLogFolder()
     {
         Directory.CreateDirectory(AppPaths.LogsDirectory);
@@ -651,7 +703,10 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private void ShowAbout()
     {
         var version = Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "?";
-        ShowBalloon($"Version {version} — switch display + audio profiles with a hotkey.", ToolTipIcon.Info);
+        _notifications.ShowWithLink(
+            $"Version {version} — switch display + audio profiles with a hotkey.",
+            "View on GitHub",
+            AppIdentity.ProjectUrl);
     }
 
     private void OnSurfaceRequested()
@@ -687,37 +742,13 @@ internal sealed class TrayApplicationContext : ApplicationContext
             ToolTipIcon.Info);
     }
 
-    private static Icon LoadTrayIcon()
-    {
-        try
-        {
-            var assembly = Assembly.GetExecutingAssembly();
-            var resource = assembly.GetManifestResourceNames()
-                .FirstOrDefault(n => n.EndsWith("app.ico", StringComparison.OrdinalIgnoreCase));
-            if (resource is not null)
-            {
-                using var stream = assembly.GetManifestResourceStream(resource);
-                if (stream is not null)
-                {
-                    return new Icon(stream, SystemInformation.SmallIconSize);
-                }
-            }
-        }
-        catch
-        {
-            // Fall back to a stock icon if the embedded .ico can't be loaded.
-        }
-
-        return SystemIcons.Application;
-    }
-
     // Shows a notification (toast, replacing the previous one), keeping the ToolTipIcon-based call sites.
     private void ShowBalloon(string message, ToolTipIcon icon) =>
         _notifications.Show(message, icon == ToolTipIcon.Warning ? NotificationLevel.Warning : NotificationLevel.Info);
 
     // The literal tray balloon — used only as the toast fallback.
     private void ShowBalloonRaw(string message, NotificationLevel level) =>
-        _tray.ShowBalloonTip(2500, "Display Selector", message, level == NotificationLevel.Warning ? ToolTipIcon.Warning : ToolTipIcon.Info);
+        _tray.ShowBalloonTip(2500, AppIdentity.AppName, message, level == NotificationLevel.Warning ? ToolTipIcon.Warning : ToolTipIcon.Info);
 
     private static string Truncate(string value, int max) =>
         value.Length <= max ? value : value[..max];

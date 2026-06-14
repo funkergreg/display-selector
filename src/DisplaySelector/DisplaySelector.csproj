@@ -16,6 +16,7 @@
     <Version>0.1.0</Version>
     <Product>Display Selector</Product>
     <Company>FunkerGreg</Company>
+    <Copyright>Copyright 2026 FunkerGreg — Apache License 2.0</Copyright>
     <!-- Required by source-generated LibraryImport P/Invoke marshalling. -->
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>

@@ -33,6 +33,7 @@ internal sealed class DisplayTestDialog : Form
         _log = log;
 
         Text = "Display test";
+        Icon = AppIcon.Window;
         FormBorderStyle = FormBorderStyle.Sizable;
         StartPosition = FormStartPosition.CenterScreen;
         MinimizeBox = false;

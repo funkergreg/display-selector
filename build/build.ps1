@@ -1,4 +1,4 @@
-#requires -Version 7.0
+#requires -Version 5.1
 <#
 .SYNOPSIS
     Build, test, publish, and package the Display Selector installer.
@@ -49,14 +49,21 @@ if (Test-Path $publishDir) {
 Invoke-Step 'Publish' {
     dotnet publish $app -c Release -r win-x64 --self-contained `
         -p:PublishSingleFile=true `
+        -p:EnableCompressionInSingleFile=true `
         -o $publishDir
 }
 
 # Inno Setup is optional locally; warn rather than fail if the compiler is absent.
-$iscc = @(
-    'C:\Program Files (x86)\Inno Setup 6\ISCC.exe',
-    'C:\Program Files\Inno Setup 6\ISCC.exe'
-) | Where-Object { Test-Path $_ } | Select-Object -First 1
+# Prefer the stable v6, then fall back to any installed edition (e.g. 7.x), then PATH.
+$roots = @(${env:ProgramFiles(x86)}, $env:ProgramFiles) | Where-Object { $_ }
+$iscc = $roots | ForEach-Object { Join-Path $_ 'Inno Setup 6\ISCC.exe' } |
+    Where-Object { Test-Path $_ } | Select-Object -First 1
+
+if (-not $iscc) {
+    $iscc = $roots |
+        ForEach-Object { Get-ChildItem -Path (Join-Path $_ 'Inno Setup *\ISCC.exe') -ErrorAction SilentlyContinue } |
+        Sort-Object FullName -Descending | Select-Object -First 1 -ExpandProperty FullName
+}
 
 if (-not $iscc) {
     $cmd = Get-Command iscc -ErrorAction SilentlyContinue

@@ -8,6 +8,7 @@ internal sealed class TextInputDialog : Form
     public TextInputDialog(string title, string prompt, string initialValue = "")
     {
         Text = title;
+        Icon = AppIcon.Window;
         FormBorderStyle = FormBorderStyle.FixedDialog;
         StartPosition = FormStartPosition.CenterScreen;
         MinimizeBox = false;

@@ -17,7 +17,7 @@ A lightweight, mostly-idle **Windows 11** system-tray utility (personal use, ope
 - Run the tray app: `dotnet run --project src/DisplaySelector`
 - Unit tests (headless, default loop): `dotnet test --filter "Category!=Integration"`
 - Integration tests (real Windows APIs, non-destructive, needs a desktop session): `dotnet test --filter "Category=Integration"`
-- Publish + package installer: `pwsh build/build.ps1` (flags: `-IncludeIntegration`, `-SkipTests`)
+- Publish + package installer: `powershell -ExecutionPolicy Bypass -File build/build.ps1` (or `pwsh` if installed; flags: `-IncludeIntegration`, `-SkipTests`). Requires Inno Setup 6 for the installer step.
 - Tier-3 physical checks (sound actually plays, displays actually switch) are **human-in-the-loop** via the app's in-tray **Diagnostics** menu — not automatable.
 
 ## Skills (prefer these over ad-hoc commands)

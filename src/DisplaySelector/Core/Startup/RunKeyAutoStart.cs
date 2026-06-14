@@ -18,12 +18,23 @@ public sealed class RunKeyAutoStart : IAutoStartManager
 
     public bool IsEnabled()
     {
+        if (PackageContext.IsPackaged)
+        {
+            return false; // MSIX uses a StartupTask, not the Run key (see docs/STORE.md).
+        }
+
         using var key = Registry.CurrentUser.OpenSubKey(RunKeyPath);
         return key?.GetValue(ValueName) is string value && !string.IsNullOrEmpty(value);
     }
 
     public void Enable()
     {
+        if (PackageContext.IsPackaged)
+        {
+            _log.Info("Packaged (MSIX) context: auto-start must use a StartupTask, not the Run key — skipping.");
+            return;
+        }
+
         var exePath = Environment.ProcessPath;
         if (string.IsNullOrEmpty(exePath))
         {
@@ -38,6 +49,11 @@ public sealed class RunKeyAutoStart : IAutoStartManager
 
     public void Disable()
     {
+        if (PackageContext.IsPackaged)
+        {
+            return;
+        }
+
         using var key = Registry.CurrentUser.OpenSubKey(RunKeyPath, writable: true);
         key?.DeleteValue(ValueName, throwOnMissingValue: false);
         _log.Info("Auto-start disabled.");
