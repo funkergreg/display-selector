@@ -7,7 +7,7 @@ namespace DisplaySelector.Core;
 /// Detects whether the process is running inside an MSIX package. Lets platform code pick the right
 /// implementation — e.g. auto-start uses a StartupTask under MSIX (the HKCU Run key is virtualized
 /// and ineffective there). Currently always false for our unpackaged builds; it's the seam for a
-/// future MSIX target (see docs/STORE.md).
+/// future MSIX target (see docs/microsoft-store-distribution-roadmap.md).
 /// </summary>
 public static class PackageContext
 {

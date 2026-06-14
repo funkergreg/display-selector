@@ -20,7 +20,7 @@ public sealed class RunKeyAutoStart : IAutoStartManager
     {
         if (PackageContext.IsPackaged)
         {
-            return false; // MSIX uses a StartupTask, not the Run key (see docs/STORE.md).
+            return false; // MSIX uses a StartupTask, not the Run key (see docs/microsoft-store-distribution-roadmap.md).
         }
 
         using var key = Registry.CurrentUser.OpenSubKey(RunKeyPath);

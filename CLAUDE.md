@@ -6,7 +6,7 @@ Guidance for agentic coding on this repo. Keep this file current as the source o
 A lightweight, mostly-idle **Windows 11** system-tray utility (personal use, open-sourced). It captures the current **display + default audio device** as a named **Profile**, binds each profile to a **global hotkey**, and switches the whole machine to a profile with one keypress. WinForms + .NET 10, distributed via an Inno Setup installer.
 
 ## Golden rules
-- **Do NOT `git commit` or `git push`.** The developer does all commits/pushes as a QC step. You may run read-only git (`status`, `diff`, `log`).
+- **Do NOT `git commit`, and do NOT `git push` — except** the release-publishing step explicitly outlined in the `/build-release` skill (creating a tagged GitHub release and uploading the installer). The developer does all routine commits/pushes as a QC step. You may always run read-only git (`status`, `diff`, `log`).
 - **Windows 11 only** is the test target. Keep code portable (platform behind interfaces) but don't spend effort on other-OS/older-Windows support unless asked.
 - **Platform code lives behind an interface.** Anything touching Win32/COM goes behind `IDisplayService` / `IAudioService` / `IHotkeyService` / `INotificationService` / `IAutoStartManager` / `ILog`, so it stays mockable and swappable.
 - Prefer few dependencies. Current allowed set: **NAudio** (audio enumeration + WASAPI test playback) and **Microsoft.Toolkit.Uwp.Notifications** (Win11 toasts via the unpackaged compat layer). Logger is hand-rolled. Clear new dependencies with the developer first.

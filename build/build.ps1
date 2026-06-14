@@ -21,6 +21,14 @@ $app = Join-Path $root 'src/DisplaySelector'
 $tests = Join-Path $root 'tests/DisplaySelector.Tests'
 $publishDir = Join-Path $root 'publish'
 $iss = Join-Path $root 'installer/setup.iss'
+$csproj = Join-Path $app 'DisplaySelector.csproj'
+
+# Single source of truth for the version: the app .csproj <Version>. We pass it to the installer
+# compiler (/DAppVersion=) so setup.iss never has to be edited on a version bump.
+$version = ([xml](Get-Content $csproj)).Project.PropertyGroup.Version |
+    Where-Object { $_ } | Select-Object -First 1
+if (-not $version) { throw "Could not read <Version> from $csproj." }
+Write-Host "==> Version $version (from $([System.IO.Path]::GetFileName($csproj)))" -ForegroundColor Cyan
 
 function Invoke-Step {
     param([string]$Name, [scriptblock]$Action)
@@ -72,7 +80,7 @@ if (-not $iscc) {
 
 if ($iscc) {
     Invoke-Step 'Package installer' {
-        & $iscc $iss
+        & $iscc "/DAppVersion=$version" $iss
     }
     $installer = Join-Path $root 'installer/Output/DisplaySelectorSetup.exe'
     if (Test-Path $installer) {
