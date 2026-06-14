@@ -33,24 +33,30 @@ One PC, several setups — e.g. a multi-monitor desk, a single TV for couch gami
 
 Download `DisplaySelectorSetup.exe` from [Releases](https://github.com/funkergreg/display-selector/releases) and run it. It's a **per-user** install (no admin needed). 
 
-> ![NOTE]
+> [!NOTE]
 > The app is unsigned, so Windows SmartScreen may warn — choose *More info → Run anyway*.
 
-To uninstall: **Settings ▸ Apps ▸ Installed apps ▸ Display Selector ▸ Uninstall**. This removes the app, the *Start with Windows* entry, and **all data** under `%LOCALAPPDATA%\DisplaySelector` (profiles, config, logs).
+To uninstall: **Settings ▸ Apps ▸ Installed apps ▸ Display Selector ▸ Uninstall**.
+
+Windows-based uninstall removes the app, the *Start with Windows* entry, and **all data** under `%LOCALAPPDATA%\DisplaySelector` (profiles, config, logs).
 
 ## Usage
 
-The app lives in the system tray. **click the ![DS](assets/display-selector-icon-16x16.png) icon** for the menu:
+1. Run the application (if needed, since it defaults to start with Windows)
+2. **Click the ![DS](assets/display-selector-icon-16x16.png) icon** in the system tray to access the the menu. In the menu, you can:
+    - Arrange your displays + set your audio device the way you want them
+    - **Save current settings as new profile…** → name the `Profile`. It auto-assigns the next free F-key (F9–F12)
+    - Click a `Profile` to switch to it
+    - Use **Manage profiles** to rename, delete, or change a profile's hotkey/audio device
 
-1. Arrange your displays + set your audio device the way you want them.
-2. **Save current settings as new profile…** → name the `Profile`. It auto-assigns the next free F-key (F9–F12).
-3. Press the hotkey (or click the profile) anytime to switch back to that setup.
-4. Use **Manage profiles** to rename, delete, or change a profile's hotkey/audio device.
+Outside the menu, after `Profiles` are created and hotkeys assigned:
 
-Hotkeys are accelerators only — everything is reachable from the menu.
+1. Press an assigned hotkey to switch to a specific `Profile`.
+
+Hotkeys are accelerators only — everything is reachable from the menu accessible from the system tray.
 
 > [!TIP]
-> `Run when Windows Starts` is enabled by default after install since this needs to be in the system tray to work, but this can be turned off in the ![DS](assets/display-selector-icon-16x16.png) menu
+> `Run when Windows Starts` is enabled by default after install since this needs to be active in the system tray to work, but this can be turned off in the ![DS](assets/display-selector-icon-16x16.png) menu.
 
 ## Build from source
 
