@@ -42,12 +42,19 @@ Windows-based uninstall removes the app, the *Start with Windows* entry, and **a
 
 ## Usage
 
+### Initial Setup
+
 1. Run the application (if needed, since it defaults to start with Windows)
-2. **Click the ![DS](assets/display-selector-icon-16x16.png) icon** in the system tray to access the the menu. In the menu, you can:
-    - Arrange your displays + set your audio device the way you want them
-    - **Save current settings as new profile…** → name the `Profile`. It auto-assigns the next free F-key (F9–F12)
-    - Click a `Profile` to switch to it
-    - Use **Manage profiles** to rename, delete, or change a profile's hotkey/audio device
+2. Arrange your displays + set your audio device the way you want them for a `Profile`
+3. **Click the ![DS](assets/display-selector-icon-16x16.png) icon** in the system tray to access the the menu.
+    - ![system-tray](assets\user-guide\ds-system-tray.png)
+4. **Save current settings as new profile…** → name the `Profile`. It auto-assigns the next free F-key (F9–F12)
+    - ![new-profile-and-dialog](assets\user-guide\ds-new-profile-and-dialog.png)
+
+> [!TIP]
+> `Run when Windows Starts` is enabled by default after install since this needs to be active in the system tray to work, but this can be turned off in the ![DS](assets/display-selector-icon-16x16.png) menu.
+
+### Hotkeys
 
 Outside the menu, after `Profiles` are created and hotkeys assigned:
 
@@ -55,8 +62,19 @@ Outside the menu, after `Profiles` are created and hotkeys assigned:
 
 Hotkeys are accelerators only — everything is reachable from the menu accessible from the system tray.
 
-> [!TIP]
-> `Run when Windows Starts` is enabled by default after install since this needs to be active in the system tray to work, but this can be turned off in the ![DS](assets/display-selector-icon-16x16.png) menu.
+### Additional Usage Options
+
+- Click a `Profile` to switch to it
+  - ![switching-profiles](assets\user-guide\ds-switching-profiles.png)
+- Use **Manage profiles** to rename, delete, or change a profile's hotkey/audio device
+- Click `Run audio test...` to bring up the dialog
+  - ![audio-test](assets\user-guide\ds-audio-test.png)
+  - Play a sound on the selected device
+  - Make a device default for all profiles
+  - Switch to the selected device on a specific profile
+- If you find anything that could be fixed, submit a bug report...
+  - ![submit-bug-report](assets\user-guide\ds-submit-bug-report.png)
+  - The application takes you to GitHub and pre-populates a form with debug info
 
 ## Build from source
 
