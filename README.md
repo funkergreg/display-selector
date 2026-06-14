@@ -25,7 +25,7 @@ One PC, several setups — e.g. a multi-monitor desk, a single TV for couch gami
 - **Manage profiles**: rename, delete (with confirmation), set hotkey, set audio device.
 - **Active-profile indicator** in the menu (or *Custom (unsaved)* when nothing matches).
 - **Start with Windows** toggle.
-- **Diagnostics** submenu: enable debug logging, run an audio test (play a tone per device + confirm), run a display test (see what the tool detects + validate/re-apply), open the log folder.
+- **Diagnostics** submenu: enable debug logging, run an audio test (play a tone per device + confirm), run a display test (see what the tool detects + validate/re-apply), open the log folder, and **submit a bug report / feature request** (opens a pre-filled GitHub issue with your system profile inline and your recent log on the clipboard; the Windows username is redacted).
 - **Re-applying the active profile re-asserts the configuration** — the fix for a frozen/stuck Windows display UI.
 
 > [!TIP]

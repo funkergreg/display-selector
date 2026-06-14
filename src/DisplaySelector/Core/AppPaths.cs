@@ -14,6 +14,9 @@ public static class AppPaths
 
     public static string LogsDirectory => Path.Combine(DataDirectory, "logs");
 
+    /// <summary>The active (un-rolled) log file. Mirrors <c>FileLogger</c>'s base name.</summary>
+    public static string CurrentLogFile => Path.Combine(LogsDirectory, "displayselector.log");
+
     public static string ProfilesFile => Path.Combine(DataDirectory, "profiles.json");
 
     public static string ConfigFile => Path.Combine(DataDirectory, "config.json");

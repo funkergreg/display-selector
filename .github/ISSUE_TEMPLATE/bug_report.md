@@ -1,31 +1,42 @@
 ---
 name: Bug report
-about: Create a report to help improve Display Selector
-title: "[BUG]"
+about: Report a problem with Display Selector
+title: "[BUG] "
 labels: bug
 assignees: funkergreg
-
 ---
 
-**Describe the bug**
-A clear and concise description of what the bug is.
+> [!TIP]
+> In the app, **Diagnostics ▸ Submit bug report…** opens this form pre-filled with your
+> system profile and recent log, copies the full log to the clipboard, and opens the log
+> folder — paste the full log below or drag in `displayselector.log`.
 
-**To Reproduce**
-Steps to reproduce the behavior:
-1. Go to '...'
-2. Click on '....'
-3. Scroll down to '....'
-4. See error
+### Describe the bug
 
-**Expected behavior**
-A clear and concise description of what you expected to happen.
+A clear, concise description of what went wrong.
 
-**Screenshots**
-If applicable, add screenshots to help explain your problem.
+### Steps to reproduce
 
-**Desktop (please complete the following information):**
- - OS: [e.g. Windows]
- - Version [e.g. 22]
+1.
+2.
+3.
 
-**Additional context**
-Add any other context about the problem here.
+### Expected behavior
+
+What you expected to happen instead.
+
+### Recent log
+
+Paste your log between the fences (or drag `displayselector.log` into this box):
+
+```
+(paste log here)
+```
+
+### Diagnostics
+
+<!-- If you used Diagnostics ▸ Submit bug report…, your system profile is filled in here. -->
+
+### Additional context
+
+Anything else that might help.

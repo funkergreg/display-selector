@@ -247,6 +247,16 @@ internal sealed class TrayApplicationContext : ApplicationContext
         openLogs.Click += (_, _) => OpenLogFolder();
         diagnostics.DropDownItems.Add(openLogs);
 
+        diagnostics.DropDownItems.Add(new ToolStripSeparator());
+
+        var bugReport = new ToolStripMenuItem("Submit bug report…");
+        bugReport.Click += (_, _) => SubmitBugReport();
+        diagnostics.DropDownItems.Add(bugReport);
+
+        var featureRequest = new ToolStripMenuItem("Request a feature…");
+        featureRequest.Click += (_, _) => RequestFeature();
+        diagnostics.DropDownItems.Add(featureRequest);
+
         return diagnostics;
     }
 
@@ -698,6 +708,59 @@ internal sealed class TrayApplicationContext : ApplicationContext
         Directory.CreateDirectory(AppPaths.LogsDirectory);
         Process.Start(new ProcessStartInfo { FileName = AppPaths.LogsDirectory, UseShellExecute = true });
         _log.Info("Opened log folder.");
+    }
+
+    // Opens a prefilled GitHub bug report in the browser. GitHub can't attach files via URL, so the
+    // system profile is inlined in the issue body and the (larger) recent log is placed on the
+    // clipboard with the log folder opened — the reporter pastes the log or drags the file in.
+    private void SubmitBugReport()
+    {
+        try
+        {
+            var diagnostics = IssueReporter.ScrubUser(DiagnosticsReport.Build(_displayService, _audioService));
+
+            // Full (redacted) log goes to the clipboard; a short tail is inlined in the issue body
+            // so there's runtime context even if the reporter never pastes the clipboard.
+            var logTail = IssueReporter.ReadRecentLog();
+            var url = IssueReporter.BugReportUrl(diagnostics, IssueReporter.TailLines(logTail));
+
+            try
+            {
+                Clipboard.SetText(string.IsNullOrEmpty(logTail) ? " " : logTail);
+            }
+            catch (Exception ex)
+            {
+                _log.Error("Couldn't copy the log to the clipboard for the bug report.", ex);
+            }
+
+            Directory.CreateDirectory(AppPaths.LogsDirectory);
+            Process.Start(new ProcessStartInfo { FileName = AppPaths.LogsDirectory, UseShellExecute = true });
+            Process.Start(new ProcessStartInfo { FileName = url, UseShellExecute = true });
+
+            _log.Info("Opened prefilled GitHub bug report; recent log copied to clipboard.");
+            ShowBalloon(
+                "Bug report opened in your browser. Your recent log is on the clipboard — paste it into the Logs section (or drag displayselector.log in from the folder that just opened).",
+                ToolTipIcon.Info);
+        }
+        catch (Exception ex)
+        {
+            _log.Error("Failed to open the bug report.", ex);
+            ShowBalloon("Couldn't open the bug report — see the log.", ToolTipIcon.Warning);
+        }
+    }
+
+    private void RequestFeature()
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo { FileName = IssueReporter.FeatureRequestUrl(), UseShellExecute = true });
+            _log.Info("Opened prefilled GitHub feature request.");
+        }
+        catch (Exception ex)
+        {
+            _log.Error("Failed to open the feature request.", ex);
+            ShowBalloon("Couldn't open the feature request — see the log.", ToolTipIcon.Warning);
+        }
     }
 
     private void ShowAbout()
