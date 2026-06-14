@@ -52,19 +52,22 @@ public static class DiagnosticsReport
 
     private static List<string> GetAdapters()
     {
-        var result = new List<string>();
-        var device = new DISPLAY_DEVICE { cb = Marshal.SizeOf<DISPLAY_DEVICE>() };
+        var structSize = Marshal.SizeOf<DISPLAY_DEVICE>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var adapters = new List<string>();
+
+        var device = new DISPLAY_DEVICE { cb = structSize };
         for (uint i = 0; EnumDisplayDevices(null, i, ref device, 0); i++)
         {
-            if (!string.IsNullOrWhiteSpace(device.DeviceString) && !result.Contains(device.DeviceString))
+            if (!string.IsNullOrWhiteSpace(device.DeviceString) && seen.Add(device.DeviceString))
             {
-                result.Add(device.DeviceString);
+                adapters.Add(device.DeviceString);
             }
 
-            device.cb = Marshal.SizeOf<DISPLAY_DEVICE>();
+            device.cb = structSize;
         }
 
-        return result;
+        return adapters;
     }
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]

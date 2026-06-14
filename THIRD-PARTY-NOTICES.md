@@ -8,10 +8,10 @@ license, reproduced/linked below.
 ## NAudio
 
 - License: MIT
-- Project: https://github.com/naudio/NAudio
+- Project: <https://github.com/naudio/NAudio>
 - Copyright © Mark Heath and contributors
 
-```
+```text
 MIT License
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -38,10 +38,10 @@ SOFTWARE.
 ## Microsoft.Toolkit.Uwp.Notifications (Windows Community Toolkit)
 
 - License: MIT
-- Project: https://github.com/CommunityToolkit/WindowsCommunityToolkit
+- Project: <https://github.com/CommunityToolkit/WindowsCommunityToolkit>
 - Copyright © .NET Foundation and Contributors
 
-```
+```text
 MIT License
 
 Permission is hereby granted, free of charge, to any person obtaining a copy

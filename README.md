@@ -1,4 +1,4 @@
-![Display Selector](assets/banner-display-selector.png)
+![Display Selector](assets/display-selector-banner.png)
 
 # Display Selector
 
