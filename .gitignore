@@ -14,3 +14,7 @@ installer/Output/
 # OS
 [Tt]humbs.db
 desktop.ini
+
+# Developer Scratchpad
+**/TODO.md
+**/visual-review.png

@@ -66,7 +66,7 @@ The published app is a self-contained single-file `win-x64` executable — end u
 
 ## Data & privacy
 
-Everything is local. Profiles and config are human-readable JSON under `%LOCALAPPDATA%\DisplaySelector`. Nothing is sent anywhere. Logs (also local) record settings on save/activation to aid debugging; enable **Diagnostics ▸ Enable debug logging** for verbose detail.
+Everything is local. Profiles and config are human-readable JSON under `%LOCALAPPDATA%\DisplaySelector`. Nothing is sent anywhere under normal operation, but there are links to GitHub, including the description in `About`, and by explicitly submitting a feature requests and bug reports via the menu, the latter of which does populate info into the form via URL params; all info in the bug report is reviewable before the issue is created. Logs (also local) record settings on save/activation to aid debugging; enable **Diagnostics ▸ Enable debug logging** for verbose detail.
 
 ## Notes & limits
 
