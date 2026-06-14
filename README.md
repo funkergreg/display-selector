@@ -26,7 +26,7 @@ One PC, several setups — e.g. a multi-monitor desk, a single TV for couch gami
 Download the installer `DisplaySelectorSetup.exe` from [Releases](https://github.com/funkergreg/display-selector/releases) and run it. It's a **per-user** install (no admin needed).
 
 > [!NOTE]
-> The app is unsigned, so Windows SmartScreen may warn*.
+> The app is unsigned, so Windows SmartScreen may warn: choose **More info → Run anyway**.
 
 To uninstall: **Settings ▸ Apps ▸ Installed apps ▸ Display Selector ▸ Uninstall**.
 
