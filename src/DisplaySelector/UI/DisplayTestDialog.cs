@@ -25,7 +25,6 @@ internal sealed class DisplayTestDialog : Form
     private readonly Button _refreshButton = new() { Text = "Refresh", Width = 90 };
     private readonly Button _validateButton = new() { Text = "Validate", Width = 90 };
     private readonly Button _reapplyButton = new() { Text = "Re-apply current", Width = 130 };
-    private readonly Button _closeButton = new() { Text = "Close", Width = 80 };
 
     public DisplayTestDialog(IDisplayService display, ILog log)
     {
@@ -47,7 +46,8 @@ internal sealed class DisplayTestDialog : Form
             Height = 44,
             Padding = new Padding(8),
         };
-        buttons.Controls.AddRange(new Control[] { _refreshButton, _validateButton, _reapplyButton, _closeButton });
+        // The window's [x] closes the dialog, so there's no redundant Close button.
+        buttons.Controls.AddRange(_refreshButton, _validateButton, _reapplyButton);
 
         var outputPanel = new Panel { Dock = DockStyle.Fill, Padding = new Padding(8) };
         outputPanel.Controls.Add(_output);
@@ -58,7 +58,6 @@ internal sealed class DisplayTestDialog : Form
         _refreshButton.Click += (_, _) => Refresh_();
         _validateButton.Click += (_, _) => ValidateConfig();
         _reapplyButton.Click += (_, _) => Reapply();
-        _closeButton.Click += (_, _) => Close();
 
         Refresh_();
     }

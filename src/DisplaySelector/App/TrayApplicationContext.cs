@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Drawing;
 using System.Reflection;
 using DisplaySelector.Core;
 using DisplaySelector.Core.Activation;
@@ -63,9 +62,18 @@ internal sealed class TrayApplicationContext : ApplicationContext
         _activator = activator;
         _autoStart = autoStart;
 
+        // No config file yet => fresh install. Enable auto-start by default (the app is useless when
+        // not running in the tray); the user can turn it off from the menu thereafter.
+        var firstRun = !File.Exists(AppPaths.ConfigFile);
+
         _config = _configStore.Load();
         _logger.Level = _config.DebugLogging ? LogLevel.Debug : LogLevel.Info;
         _document = _profileStore.Load();
+
+        if (firstRun)
+        {
+            EnableAutoStartByDefault();
+        }
 
         _listener = new HiddenWindow(surfaceMessage);
         _listener.MessageReceived += OnSurfaceRequested;
@@ -147,6 +155,12 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
         menu.Items.Add(BuildManageMenu());
 
+        // Top-level (not just diagnostics): it's also the entry point for assigning an audio device
+        // to an existing profile.
+        var audioTest = new ToolStripMenuItem("Run audio test…");
+        audioTest.Click += (_, _) => RunAudioTest();
+        menu.Items.Add(audioTest);
+
         menu.Items.Add(BuildDiagnosticsMenu());
 
         var startup = new ToolStripMenuItem("Start with Windows")
@@ -221,19 +235,10 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
     private ToolStripMenuItem BuildDiagnosticsMenu()
     {
-        var diagnostics = new ToolStripMenuItem("Diagnostics");
-
-        var debugToggle = new ToolStripMenuItem("Enable debug logging")
-        {
-            Checked = _config.DebugLogging,
-            CheckOnClick = true,
-        };
-        debugToggle.Click += (_, _) => ToggleDebugLogging(debugToggle.Checked);
-        diagnostics.DropDownItems.Add(debugToggle);
-
-        var audioTest = new ToolStripMenuItem("Run audio test…");
-        audioTest.Click += (_, _) => RunAudioTest();
-        diagnostics.DropDownItems.Add(audioTest);
+        // Broader label than "Diagnostics": this submenu now also holds bug-report / feature-request,
+        // and it keeps the header visually distinct from the "Copy diagnostics" item below.
+        // "and" not "&": a single "&" is a mnemonic prefix in menu text and would not render.
+        var diagnostics = new ToolStripMenuItem("Help and diagnostics");
 
         var displayTest = new ToolStripMenuItem("Run display test…");
         displayTest.Click += (_, _) => RunDisplayTest();
@@ -246,6 +251,14 @@ internal sealed class TrayApplicationContext : ApplicationContext
         var openLogs = new ToolStripMenuItem("Open log folder");
         openLogs.Click += (_, _) => OpenLogFolder();
         diagnostics.DropDownItems.Add(openLogs);
+
+        var debugToggle = new ToolStripMenuItem("Enable debug logging")
+        {
+            Checked = _config.DebugLogging,
+            CheckOnClick = true,
+        };
+        debugToggle.Click += (_, _) => ToggleDebugLogging(debugToggle.Checked);
+        diagnostics.DropDownItems.Add(debugToggle);
 
         diagnostics.DropDownItems.Add(new ToolStripSeparator());
 
@@ -785,6 +798,16 @@ internal sealed class TrayApplicationContext : ApplicationContext
             "ShowContextMenu",
             BindingFlags.Instance | BindingFlags.NonPublic);
         showContextMenu?.Invoke(_tray, null);
+    }
+
+    // First-run default: turn on auto-start and persist it so this only happens once. On packaged
+    // (MSIX) builds Enable() is a no-op and IsEnabled() stays false — the StartupTask handles it.
+    private void EnableAutoStartByDefault()
+    {
+        _autoStart.Enable();
+        _config.AutoStart = _autoStart.IsEnabled();
+        _configStore.Save(_config);
+        _log.Info($"First run: defaulted auto-start to {_config.AutoStart}.");
     }
 
     private void ToggleAutoStart(bool enabled)

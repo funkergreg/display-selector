@@ -18,7 +18,6 @@ internal sealed class AudioTestDialog : Form
     private readonly Button _setDefaultButton = new() { Text = "Set as default", Width = 110 };
     private readonly Button _assignButton = new() { Text = "Assign to profile…", Width = 130 };
     private readonly Button _refreshButton = new() { Text = "Refresh", Width = 80 };
-    private readonly Button _closeButton = new() { Text = "Close", Width = 70 };
 
     private List<AudioEndpoint> _endpoints = new();
 
@@ -43,15 +42,15 @@ internal sealed class AudioTestDialog : Form
             Height = 44,
             Padding = new Padding(8),
         };
+        // Refresh first (leftmost) to match the Display test dialog. The window's [x] closes it, so
+        // there's no redundant Close button.
+        buttons.Controls.Add(_refreshButton);
         buttons.Controls.Add(_playButton);
         buttons.Controls.Add(_setDefaultButton);
         if (_onAssignToProfile is not null)
         {
             buttons.Controls.Add(_assignButton);
         }
-
-        buttons.Controls.Add(_refreshButton);
-        buttons.Controls.Add(_closeButton);
 
         var listPanel = new Panel { Dock = DockStyle.Fill, Padding = new Padding(8) };
         listPanel.Controls.Add(_list);
@@ -63,7 +62,6 @@ internal sealed class AudioTestDialog : Form
         _setDefaultButton.Click += (_, _) => SetSelectedAsDefault();
         _assignButton.Click += (_, _) => AssignSelectedToProfile();
         _refreshButton.Click += (_, _) => LoadDevices();
-        _closeButton.Click += (_, _) => Close();
 
         LoadDevices();
     }
@@ -109,23 +107,11 @@ internal sealed class AudioTestDialog : Form
         _playButton.Enabled = false;
         _log.Info($"Audio test: playing tone on '{endpoint.FriendlyName}'.");
 
-        // Play off the UI thread so the window stays responsive, then ask the human to confirm.
+        // Play off the UI thread so the window stays responsive; re-enable the button when done.
         Task.Run(() => _audio.PlayConfirmation(endpoint.Id))
             .ContinueWith(
-                _ => PromptHeard(endpoint),
+                _ => _playButton.Enabled = true,
                 TaskScheduler.FromCurrentSynchronizationContext());
-    }
-
-    private void PromptHeard(AudioEndpoint endpoint)
-    {
-        _playButton.Enabled = true;
-        var heard = MessageBox.Show(
-            this,
-            $"Did you hear the tone on '{endpoint.FriendlyName}'?",
-            "Audio test",
-            MessageBoxButtons.YesNo,
-            MessageBoxIcon.Question);
-        _log.Info($"Audio test result for '{endpoint.FriendlyName}': {(heard == DialogResult.Yes ? "HEARD" : "NOT heard")}.");
     }
 
     private void SetSelectedAsDefault()

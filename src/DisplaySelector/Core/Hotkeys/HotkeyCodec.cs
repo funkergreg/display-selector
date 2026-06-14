@@ -21,25 +21,12 @@ public static class HotkeyCodec
 
         foreach (var modifier in binding.Modifiers)
         {
-            switch (modifier.Trim().ToLowerInvariant())
+            if (!TryResolveModifier(modifier, out _, out var flag))
             {
-                case "control":
-                case "ctrl":
-                    modifiers |= NativeMethods.MOD_CONTROL;
-                    break;
-                case "alt":
-                    modifiers |= NativeMethods.MOD_ALT;
-                    break;
-                case "shift":
-                    modifiers |= NativeMethods.MOD_SHIFT;
-                    break;
-                case "win":
-                case "windows":
-                    modifiers |= NativeMethods.MOD_WIN;
-                    break;
-                default:
-                    return false;
+                return false;
             }
+
+            modifiers |= flag;
         }
 
         if (!Enum.TryParse<Keys>(binding.Key, ignoreCase: true, out var key))
@@ -58,7 +45,9 @@ public static class HotkeyCodec
             return "(none)";
         }
 
-        var parts = binding.Modifiers.Select(Normalize).ToList();
+        var parts = binding.Modifiers
+            .Select(m => TryResolveModifier(m, out var display, out _) ? display : m)
+            .ToList();
         parts.Add(binding.Key);
         return string.Join("+", parts);
     }
@@ -81,12 +70,29 @@ public static class HotkeyCodec
         return false;
     }
 
-    private static string Normalize(string modifier) => modifier.Trim().ToLowerInvariant() switch
+    // Single source of truth for modifier aliases: maps a stored modifier string to its canonical
+    // display name and Win32 flag. Used by both TryParse (flag) and Format (display).
+    private static bool TryResolveModifier(string modifier, out string display, out uint flag)
     {
-        "control" or "ctrl" => "Ctrl",
-        "alt" => "Alt",
-        "shift" => "Shift",
-        "win" or "windows" => "Win",
-        _ => modifier,
-    };
+        switch (modifier.Trim().ToLowerInvariant())
+        {
+            case "control":
+            case "ctrl":
+                (display, flag) = ("Ctrl", NativeMethods.MOD_CONTROL);
+                return true;
+            case "alt":
+                (display, flag) = ("Alt", NativeMethods.MOD_ALT);
+                return true;
+            case "shift":
+                (display, flag) = ("Shift", NativeMethods.MOD_SHIFT);
+                return true;
+            case "win":
+            case "windows":
+                (display, flag) = ("Win", NativeMethods.MOD_WIN);
+                return true;
+            default:
+                (display, flag) = (modifier, 0);
+                return false;
+        }
+    }
 }

@@ -13,8 +13,11 @@ namespace DisplaySelector.Core.Audio;
 /// </summary>
 public sealed class CoreAudioService : IAudioService
 {
-    private const int ToneFrequencyHz = 880;
-    private static readonly TimeSpan ToneDuration = TimeSpan.FromMilliseconds(220);
+    // Three ascending tones spanning an octave rather than one pitch: covering a wider frequency
+    // band makes the confirmation audible across more hearing profiles (accessibility).
+    private static readonly int[] ToneFrequenciesHz = { 523, 784, 1047 }; // C5, G5, C6
+    private static readonly TimeSpan ToneDuration = TimeSpan.FromMilliseconds(150);
+    private static readonly TimeSpan ToneGap = TimeSpan.FromMilliseconds(40);
 
     private readonly ILog _log;
 
@@ -88,16 +91,8 @@ public sealed class CoreAudioService : IAudioService
         var device = ResolveDevice(enumerator, endpointId);
         try
         {
-            var signal = new SignalGenerator(44100, 1)
-            {
-                Gain = 0.2,
-                Frequency = ToneFrequencyHz,
-                Type = SignalGeneratorType.Sin,
-            };
-            var tone = new OffsetSampleProvider(signal) { Take = ToneDuration };
-
             using var output = new WasapiOut(device, AudioClientShareMode.Shared, useEventSync: false, latency: 100);
-            output.Init(tone);
+            output.Init(BuildChime());
             output.Play();
             while (output.PlaybackState == PlaybackState.Playing)
             {
@@ -114,6 +109,28 @@ public sealed class CoreAudioService : IAudioService
         {
             device.Dispose();
         }
+    }
+
+    // A short ascending three-tone chime: each tone followed by a brief silence so they read as
+    // distinct beeps. Concatenated into one stream so a single WasapiOut plays the whole sequence.
+    private static ISampleProvider BuildChime()
+    {
+        var tones = ToneFrequenciesHz.Select(freq =>
+        {
+            var signal = new SignalGenerator(44100, 1)
+            {
+                Gain = 0.2,
+                Frequency = freq,
+                Type = SignalGeneratorType.Sin,
+            };
+            return (ISampleProvider)new OffsetSampleProvider(signal)
+            {
+                Take = ToneDuration,
+                LeadOut = ToneGap,
+            };
+        });
+
+        return new ConcatenatingSampleProvider(tones);
     }
 
     private static MMDevice ResolveDevice(MMDeviceEnumerator enumerator, string? endpointId)
