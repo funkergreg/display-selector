@@ -11,32 +11,32 @@ assignees: funkergreg
 > system profile and recent log, copies the full log to the clipboard, and opens the log
 > folder — paste the full log below or drag in `displayselector.log`.
 
-### Describe the bug
+## Describe the bug
 
 A clear, concise description of what went wrong.
 
-### Steps to reproduce
+## Steps to reproduce
 
 1.
 2.
 3.
 
-### Expected behavior
+## Expected behavior
 
 What you expected to happen instead.
 
-### Recent log
+## Recent log
 
 Paste your log between the fences (or drag `displayselector.log` into this box):
 
-```
+```text
 (paste log here)
 ```
 
-### Diagnostics
+## Diagnostics
 
 <!-- If you used Diagnostics ▸ Submit bug report…, your system profile is filled in here. -->
 
-### Additional context
+## Additional context
 
 Anything else that might help.

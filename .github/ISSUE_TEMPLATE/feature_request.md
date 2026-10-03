@@ -6,14 +6,18 @@ labels: enhancement
 assignees: funkergreg
 ---
 
-**What problem would this solve?**
+## What problem would this solve?
+
 The use case or pain point behind the request.
 
-**Proposed solution**
+## Proposed solution
+
 What you'd like to happen.
 
-**Alternatives considered**
+## Alternatives considered
+
 Other approaches you thought about.
 
-**Additional context**
+## Additional context
+
 Anything else (related setups, examples, mockups).
