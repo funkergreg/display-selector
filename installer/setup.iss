@@ -14,7 +14,7 @@
 ; /DAppVersion=. This #define is only the fallback for a direct `iscc setup.iss` compile; keep it
 ; in sync with the .csproj if you compile the installer without the build script.
 #ifndef AppVersion
-  #define AppVersion "1.0.0"
+  #define AppVersion "2.0.0"
 #endif
 #define AppPublisher "FunkerGreg"
 #define AppExe "DisplaySelector.exe"
