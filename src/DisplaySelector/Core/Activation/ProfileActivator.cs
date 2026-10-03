@@ -103,17 +103,26 @@ public sealed class ProfileActivator
     /// asks about one specific profile, so profiles differing only in such details are told apart.
     /// A profile with nothing saved is never live.
     /// </summary>
-    public bool IsLive(Profile profile)
+    public bool IsLive(Profile profile) => IsLive(profile, () => _audio.GetDefaultOutputDevice()?.Id);
+
+    /// <summary>
+    /// <see cref="IsLive(Profile)"/> against a default audio device already read (the live-state tracker's
+    /// snapshot), so a tie between profiles doesn't re-query it per profile. Switch decisions use the
+    /// fresh overload.
+    /// </summary>
+    internal bool IsLive(Profile profile, string? currentAudioId) => IsLive(profile, () => currentAudioId);
+
+    private bool IsLive(Profile profile, Func<string?> currentAudioId)
     {
         var audioId = profile.Audio?.EndpointId;
-        if (profile.Display is null && string.IsNullOrEmpty(audioId))
+        if (profile.IsAudioOnly && string.IsNullOrEmpty(audioId))
         {
             return false;
         }
 
         try
         {
-            return (string.IsNullOrEmpty(audioId) || _audio.GetDefaultOutputDevice()?.Id == audioId) &&
+            return (string.IsNullOrEmpty(audioId) || currentAudioId() == audioId) &&
                    (profile.Display is null || _display.MatchesCurrent(profile.Display));
         }
         catch (Exception ex)

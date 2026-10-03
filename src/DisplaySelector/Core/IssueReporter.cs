@@ -39,7 +39,7 @@ public static class IssueReporter
                 diag = diag[..Math.Max(0, diag.Length - 500)];
             }
 
-            diag = diag.TrimEnd() + "\n…(diagnostics truncated — full output via Diagnostics ▸ Copy diagnostics)";
+            diag = diag.TrimEnd() + "\n…(diagnostics truncated — full output via Help and diagnostics ▸ Copy diagnostics)";
             url = Build("bug", "[BUG] ", BugBody(diag, logTail));
         }
 

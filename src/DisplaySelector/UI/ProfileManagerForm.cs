@@ -1,12 +1,13 @@
 using DisplaySelector.App;
+using DisplaySelector.Core.Profiles;
 
 namespace DisplaySelector.UI;
 
 /// <summary>
 /// The Profile Manager window: the tray's per-profile submenu as a window. Left, the profile list
 /// (same labels and order as the tray menu, active profile check-marked); right, the commands for the
-/// selected profile; bottom, the "save current" actions plus "Create a Launcher for Profile…"
-/// (executable first).
+/// selected profile; bottom, the "save current" actions, "Create a Launcher for Profile…"
+/// (executable first) and Windows Display Settings.
 /// Modeless and single-instance; the controller calls <see cref="RefreshProfiles"/> after every change
 /// from any source (this window, the tray menu, hotkeys, launchers) so it stays live.
 /// </summary>
@@ -45,8 +46,8 @@ internal sealed class ProfileManagerForm : Form
     private readonly Button _moveUp;
     private readonly Button _moveDown;
 
-    // What's on screen: profile ids in display order (empty when there are no profiles).
-    private List<string> _ids = new();
+    // What's on screen: profiles in display order (empty when there are no profiles).
+    private List<Profile> _profiles = new();
     private string? _activeId;
 
     public ProfileManagerForm(IProfileActions actions)
@@ -68,7 +69,11 @@ internal sealed class ProfileManagerForm : Form
         };
 
         _list.DrawItem += DrawProfileRow;
-        _list.SelectedIndexChanged += (_, _) => UpdateButtons();
+        _list.SelectedIndexChanged += (_, _) =>
+        {
+            UpdateButtons();
+            _actions.SelectionChanged(SelectedId);
+        };
         _list.DoubleClick += (_, _) => RunOnSelected(_actions.Activate);
         _list.KeyDown += (_, e) =>
         {
@@ -95,6 +100,8 @@ internal sealed class ProfileManagerForm : Form
         _moveUp = AddProfileButton("Move up", id => _actions.Move(id, -1));
         _moveDown = AddProfileButton("Move down", id => _actions.Move(id, +1));
         AddSpacer();
+        AddProfileButton("Show diagnostics", _actions.ShowDiagnostics);
+        AddSpacer();
         AddProfileButton("Delete…", _actions.Delete);
         _split.Panel2.Controls.Add(_commands);
 
@@ -102,6 +109,7 @@ internal sealed class ProfileManagerForm : Form
         _bottom.Controls.Add(BarButton("Save current settings as new Profile…", _actions.SaveCurrent));
         _bottom.Controls.Add(BarButton("Save current audio device as Profile…", _actions.SaveCurrentAudio));
         _bottom.Controls.Add(BarButton("Create a Launcher for Profile…", _actions.CreateLauncherAndAssign));
+        _bottom.Controls.Add(BarButton("Display Settings…", _actions.OpenDisplaySettings));
 
         Controls.Add(_split);
         Controls.Add(_bottom);
@@ -133,7 +141,7 @@ internal sealed class ProfileManagerForm : Form
             return;
         }
 
-        _list.ItemHeight = _list.Font.Height + LogicalToDeviceUnits(8);
+        _list.ItemHeight = ProfileGlyphs.RowHeight(_list);
 
         foreach (var button in _profileButtons)
         {
@@ -175,9 +183,9 @@ internal sealed class ProfileManagerForm : Form
     {
         var profiles = _actions.Profiles;
         var newIds = profiles.Select(p => p.Id).ToList();
-        var selected = ProfileListSelection.Next(_ids, SelectedId, newIds);
+        var selected = ProfileListSelection.Next(_profiles.Select(p => p.Id).ToList(), SelectedId, newIds);
 
-        _ids = newIds;
+        _profiles = profiles.ToList();
         _activeId = _actions.ActiveProfileId;
 
         _list.BeginUpdate();
@@ -193,14 +201,14 @@ internal sealed class ProfileManagerForm : Form
                 _list.Items.Add(ProfileLabels.Label(profile));
             }
         }
-        _list.SelectedIndex = selected is null ? -1 : _ids.IndexOf(selected);
+        _list.SelectedIndex = selected is null ? -1 : newIds.IndexOf(selected);
         _list.EndUpdate();
 
         UpdateButtons();
     }
 
     private string? SelectedId =>
-        _list.SelectedIndex >= 0 && _list.SelectedIndex < _ids.Count ? _ids[_list.SelectedIndex] : null;
+        _list.SelectedIndex >= 0 && _list.SelectedIndex < _profiles.Count ? _profiles[_list.SelectedIndex].Id : null;
 
     private void RunOnSelected(Action<string> action)
     {
@@ -218,7 +226,7 @@ internal sealed class ProfileManagerForm : Form
             button.Enabled = index >= 0;
         }
         _moveUp.Enabled = index > 0;
-        _moveDown.Enabled = index >= 0 && index < _ids.Count - 1;
+        _moveDown.Enabled = index >= 0 && index < _profiles.Count - 1;
     }
 
     private Button AddProfileButton(string text, Action<string> action)
@@ -240,7 +248,8 @@ internal sealed class ProfileManagerForm : Form
         return button;
     }
 
-    // Check-mark gutter for the active profile (as in the tray menu), then the shared label.
+    // Check-mark gutter for the active profile (as in the tray menu), the Profile's glyph, then the
+    // shared label. Columns scale with the monitor's DPI.
     private void DrawProfileRow(object? sender, DrawItemEventArgs e)
     {
         if (e.Index < 0)
@@ -248,36 +257,33 @@ internal sealed class ProfileManagerForm : Form
             return;
         }
 
-        var placeholder = _ids.Count == 0;
-        var selected = !placeholder && (e.State & DrawItemState.Selected) != 0;
-        if (placeholder)
+        var bounds = e.Bounds;
+        var gutter = LogicalToDeviceUnits(GutterWidth);
+        if (_profiles.Count == 0)
         {
-            e.Graphics.FillRectangle(SystemBrushes.Window, e.Bounds); // never looks selectable
-        }
-        else
-        {
-            e.DrawBackground();
+            e.Graphics.FillRectangle(SystemBrushes.Window, bounds); // never looks selectable
+            TextRenderer.DrawText(
+                e.Graphics,
+                ProfileLabels.NoProfiles,
+                e.Font,
+                new Rectangle(bounds.X + gutter, bounds.Y, bounds.Width - gutter, bounds.Height),
+                SystemColors.GrayText,
+                TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
+            return;
         }
 
-        var color = placeholder ? SystemColors.GrayText : selected ? SystemColors.HighlightText : SystemColors.WindowText;
-        var bounds = e.Bounds;
-        if (!placeholder && _ids[e.Index] == _activeId)
+        e.DrawBackground();
+        var profile = _profiles[e.Index];
+        if (profile.Id == _activeId)
         {
+            var selected = (e.State & DrawItemState.Selected) != 0;
             TextRenderer.DrawText(
-                e.Graphics, "✓", e.Font, new Rectangle(bounds.X, bounds.Y, GutterWidth, bounds.Height), color,
+                e.Graphics, "✓", e.Font, new Rectangle(bounds.X, bounds.Y, gutter, bounds.Height),
+                selected ? SystemColors.HighlightText : SystemColors.WindowText,
                 TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
         }
 
-        TextRenderer.DrawText(
-            e.Graphics,
-            _list.Items[e.Index].ToString(),
-            e.Font,
-            new Rectangle(bounds.X + GutterWidth, bounds.Y, bounds.Width - GutterWidth, bounds.Height),
-            color,
-            TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
-        if (!placeholder)
-        {
-            e.DrawFocusRectangle();
-        }
+        ProfileGlyphs.DrawRow(_list, e, profile, _list.Items[e.Index].ToString() ?? string.Empty, gutter);
+        e.DrawFocusRectangle();
     }
 }

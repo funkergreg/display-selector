@@ -17,7 +17,7 @@ Run the project's xUnit tests and summarize results concisely.
 
 ## What is NOT covered here
 
-- **Tier-3 active / physical checks** (did the tone actually play on the soundbar? did the displays actually switch?) cannot be asserted by a machine. Those run **human-in-the-loop** from the app's in-tray **Diagnostics** menu (Run audio test / Run display test). Mention this if the user expects automated verification of physical output.
+- **Tier-3 active / physical checks** (did the tone actually play on the soundbar? did the displays actually switch?) cannot be asserted by a machine. Those run **human-in-the-loop** from the app's in-tray **Help and diagnostics** menu (Run display test / Run audio test). Mention this if the user expects automated verification of physical output.
 
 ## Notes
 

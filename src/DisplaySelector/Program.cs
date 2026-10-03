@@ -43,7 +43,7 @@ internal static class Program
         {
             var profileStore = new JsonProfileStore(AppPaths.ProfilesFile, logger);
             var configStore = new JsonConfigStore(AppPaths.ConfigFile, logger);
-            var audioService = new CoreAudioService(logger);
+            using var audioService = new CoreAudioService(logger); // stops its change notifications on exit
             var displayService = new CcdDisplayService(logger);
             var activator = new ProfileActivator(displayService, audioService, logger);
             var autoStart = new RunKeyAutoStart(logger);

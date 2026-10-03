@@ -1,3 +1,4 @@
+using DisplaySelector.Core.Audio;
 using DisplaySelector.Core.Display;
 using DisplaySelector.Core.Logging;
 using DisplaySelector.Core.Profiles;
@@ -33,10 +34,12 @@ internal sealed class TempDir : IDisposable
     }
 }
 
-/// <summary>No-op logger for store tests that don't assert on log output.</summary>
+/// <summary>No-op logger for tests that don't assert on log output; it only counts errors.</summary>
 internal sealed class NullLog : ILog
 {
     public LogLevel Level { get; set; } = LogLevel.Info;
+
+    public int Errors { get; private set; }
 
     public void Info(string message)
     {
@@ -46,9 +49,49 @@ internal sealed class NullLog : ILog
     {
     }
 
-    public void Error(string message, Exception? ex = null)
+    public void Error(string message, Exception? ex = null) => Errors++;
+}
+
+/// <summary>
+/// Audio fake for state queries: a settable device list and default device (else the listed device
+/// marked default); optionally throws.
+/// </summary>
+internal sealed class StubAudioService : IAudioService
+{
+    public string? DefaultId { get; set; }
+
+    public IReadOnlyList<AudioEndpoint> Devices { get; set; } = Array.Empty<AudioEndpoint>();
+
+    public bool Throws { get; set; }
+
+    public int DefaultQueries { get; private set; }
+
+    public int DeviceQueries { get; private set; }
+
+    public IReadOnlyList<AudioEndpoint> GetOutputDevices()
     {
+        DeviceQueries++;
+        return Devices;
     }
+
+    public AudioEndpoint? GetDefaultOutputDevice()
+    {
+        DefaultQueries++;
+        return Throws ? throw new InvalidOperationException("device arriving")
+            : DefaultId is null ? Devices.FirstOrDefault(d => d.IsDefault) : new AudioEndpoint(DefaultId, DefaultId, true);
+    }
+
+    public bool IsDeviceActive(string endpointId) => true;
+
+    public bool SetDefaultOutputDevice(string endpointId)
+    {
+        DefaultId = endpointId;
+        return true;
+    }
+
+    public Task PlayConfirmationAsync(string? endpointId = null) => Task.CompletedTask;
+
+    public event Action? DefaultDeviceChanged { add { } remove { } }
 }
 
 /// <summary>Display fake: returns a scripted sequence of live layouts (the last one repeats) and records applies.</summary>
@@ -82,21 +125,17 @@ internal sealed class ScriptedDisplayService : IDisplayService
     /// <summary>A display that shows up as connected from the given (1-based) connected-query onwards.</summary>
     public (int FromQuery, string Id)? Connects { get; set; }
 
-    private int _connectedQueries;
+    public int ConnectedQueries { get; private set; }
 
-    public IReadOnlySet<string> GetConnectedTargetIds()
+    public IReadOnlyList<DisplayTarget> GetConnectedDisplays()
     {
-        _connectedQueries++;
-        return Connects is { } c && _connectedQueries >= c.FromQuery
-            ? new HashSet<string> { c.Id }
-            : new HashSet<string>();
+        ConnectedQueries++;
+        return Connects is { } c && ConnectedQueries >= c.FromQuery
+            ? new[] { new DisplayTarget { StableId = c.Id } }
+            : Array.Empty<DisplayTarget>();
     }
 
     public DisplayConfig Capture() => new();
-
-    public bool ValidateCurrent() => true;
-
-    public DisplayApplyResult ReapplyCurrent() => DisplayApplyResult.Ok();
 
     public int ApplyCount { get; private set; }
 

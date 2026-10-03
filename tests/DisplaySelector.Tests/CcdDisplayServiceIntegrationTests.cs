@@ -6,8 +6,8 @@ using Xunit.Abstractions;
 namespace DisplaySelector.Tests;
 
 /// <summary>
-/// Tier-2 integration: real CCD APIs, non-destructive. Capture and decode read-only; validation uses
-/// SDC_VALIDATE (never applies). Re-applying displays is tier-3 (human-observed) and is NOT done here.
+/// Tier-2 integration: real CCD APIs, non-destructive (capture and decode are read-only). Applying
+/// displays is tier-3 (human-observed) and is NOT done here.
 /// </summary>
 [Trait("Category", "Integration")]
 public class CcdDisplayServiceIntegrationTests
@@ -62,21 +62,12 @@ public class CcdDisplayServiceIntegrationTests
     }
 
     [Fact]
-    public void Current_configuration_validates()
-    {
-        var service = new CcdDisplayService(new NullLog());
-
-        // SDC_VALIDATE only — does not change the display configuration.
-        Assert.True(service.ValidateCurrent());
-    }
-
-    [Fact]
     public void Connected_ports_include_every_active_display()
     {
         var service = new CcdDisplayService(new NullLog());
 
         var active = service.GetCurrentDisplays().Select(d => d.StableId).ToList();
-        var connected = service.GetConnectedTargetIds();
+        var connected = service.GetConnectedDisplays().Select(d => d.StableId).ToList();
 
         _output.WriteLine($"active:    {string.Join(", ", active)}");
         _output.WriteLine($"connected: {string.Join(", ", connected)}");

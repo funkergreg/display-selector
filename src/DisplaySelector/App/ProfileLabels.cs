@@ -7,7 +7,7 @@ namespace DisplaySelector.App;
 /// <summary>
 /// How profiles are shown everywhere (tray menu, Profile Manager, pickers), shared so they always match
 /// and reordering looks identical. The name the user chose IS the description, so device details are
-/// deliberately left out.
+/// deliberately left out; the <see cref="ProfileGlyphs"/> icon beside it marks audio-only Profiles.
 /// </summary>
 internal static class ProfileLabels
 {
@@ -31,6 +31,6 @@ internal static class ProfileLabels
             return null;
         }
 
-        return ListPickerDialog<Profile>.Pick(title, prompt, profiles, Label);
+        return ListPickerDialog.Pick(title, prompt, profiles);
     }
 }

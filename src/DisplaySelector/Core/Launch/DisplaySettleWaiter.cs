@@ -162,7 +162,7 @@ public sealed class DisplaySettleWaiter
     {
         try
         {
-            var connected = _display.GetConnectedTargetIds();
+            var connected = _display.GetConnectedDisplays().Select(d => d.StableId).ToHashSet();
             return displayIds.Where(connected.Contains).ToList();
         }
         catch (Exception ex)

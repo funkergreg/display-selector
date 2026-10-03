@@ -3,7 +3,7 @@ namespace DisplaySelector.Core.Profiles;
 /// <summary>
 /// Reboot-stable comparison of captured profile state, used to warn about saving a duplicate. Kept
 /// out of the UI controller so it stays WinForms-free and unit-testable, and separate from the
-/// tray's live-hardware match (<c>FindActiveProfileId</c>), which intentionally compares at a coarser
+/// tray's live-hardware match (<see cref="FindActive"/>, via <c>LiveStateTracker</c>), which intentionally compares at a coarser
 /// fidelity (stable-id set + primary only).
 /// </summary>
 internal static class ProfileMatching

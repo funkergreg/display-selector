@@ -61,4 +61,18 @@ public class CoreAudioServiceIntegrationTests
         // No-op switch: validates the IPolicyConfig path without altering the user's setup.
         Assert.True(service.SetDefaultOutputDevice(def.Id));
     }
+
+    [Fact]
+    public void Change_notifications_register_and_unregister_cleanly()
+    {
+        var log = new NullLog();
+        var service = new CoreAudioService(log);
+        Action handler = () => { };
+
+        service.DefaultDeviceChanged += handler; // registers with Windows
+        service.DefaultDeviceChanged -= handler;
+        service.Dispose();                       // unregisters
+
+        Assert.Equal(0, log.Errors);
+    }
 }

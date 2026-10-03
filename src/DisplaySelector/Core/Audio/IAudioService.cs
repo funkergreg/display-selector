@@ -27,4 +27,12 @@ public interface IAudioService
     /// abandoned, never waited on forever. Never throws.
     /// </summary>
     Task PlayConfirmationAsync(string? endpointId = null);
+
+    /// <summary>
+    /// Raised when the default output device may have changed (a new default, or an output device
+    /// arriving / leaving), by this app or anyone else. Raised on a Windows audio worker thread, not the
+    /// UI thread: handlers must marshal and must not block. Windows starts reporting on the first
+    /// subscription.
+    /// </summary>
+    event Action? DefaultDeviceChanged;
 }
