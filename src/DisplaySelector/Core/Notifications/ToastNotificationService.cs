@@ -14,7 +14,6 @@ namespace DisplaySelector.Core.Notifications;
 public sealed class ToastNotificationService : INotificationService
 {
     private const string StatusTag = "status";
-    private const string AboutTag = "about";
     private const string Group = "displayselector";
 
     private readonly ILog _log;
@@ -31,21 +30,6 @@ public sealed class ToastNotificationService : INotificationService
         TryToastOrFallback(
             () => ShowToast(StatusTag, builder => builder.AddText(message)),
             message,
-            level);
-
-    public void ShowWithLinks(string message, IReadOnlyList<(string Label, string Url)> links, NotificationLevel level = NotificationLevel.Info) =>
-        TryToastOrFallback(
-            // Distinct tag so it isn't replaced by routine status toasts before it can be clicked.
-            // Protocol activation opens the URL in the default browser — no app-side activation handler needed.
-            () => ShowToast(AboutTag, builder =>
-            {
-                builder.AddText(message);
-                foreach (var (label, url) in links)
-                {
-                    builder.AddButton(label, ToastActivationType.Protocol, url);
-                }
-            }),
-            $"{message}  {string.Join("  ", links.Select(l => l.Url))}",
             level);
 
     private void TryToastOrFallback(Action showToast, string fallbackMessage, NotificationLevel level)

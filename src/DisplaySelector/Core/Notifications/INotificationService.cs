@@ -11,7 +11,4 @@ public enum NotificationLevel
 public interface INotificationService
 {
     void Show(string message, NotificationLevel level = NotificationLevel.Info);
-
-    /// <summary>Show a notification with one button per link, each opening its URL (falls back to text + URLs).</summary>
-    void ShowWithLinks(string message, IReadOnlyList<(string Label, string Url)> links, NotificationLevel level = NotificationLevel.Info);
 }

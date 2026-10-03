@@ -41,6 +41,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private AppConfig _config;
     private ProfilesDocument _document;
     private int _nextHotkeyId = 1;
+    private AboutDialog? _aboutDialog;
 
     public TrayApplicationContext(
         FileLogger logger,
@@ -864,14 +865,39 @@ internal sealed class TrayApplicationContext : ApplicationContext
     {
         // AssemblyVersion is always 4-part (1.1.0.0); show the 3-part product version (1.1.0).
         var version = Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "?";
+        // The tray menu stays clickable while a modal is up — re-focus the open window rather than stack another.
+        if (_aboutDialog is { IsDisposed: false })
+        {
+            _aboutDialog.Activate();
+            return;
+        }
+
         _log.Info($"Showed About (version {version}).");
-        _notifications.ShowWithLinks(
-            $"Version {version} — switch display + audio profiles with a hotkey.",
-            new[]
-            {
-                ("View on GitHub", AppIdentity.ProjectUrl),
-                ("Website", AppIdentity.ProjectSiteUrl),
-            });
+        using var dialog = new AboutDialog(version, OpenAboutLink);
+        _aboutDialog = dialog;
+        try
+        {
+            dialog.ShowDialog();
+        }
+        finally
+        {
+            _aboutDialog = null;
+        }
+
+        TrimWorkingSetSoon();
+    }
+
+    private void OpenAboutLink(string url)
+    {
+        try
+        {
+            OpenExternal(url);
+            _log.Info($"Opened {url} from About.");
+        }
+        catch (Exception ex)
+        {
+            ReportFailure("open the link", ex);
+        }
     }
 
     private void OnSurfaceRequested()
