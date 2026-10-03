@@ -1,10 +1,8 @@
 {
   "permissions": {
     "allow": [
-      "WebSearch",
       "Edit(/.claude/skills/build-release/**)",
-      "Edit(/.claude/skills/run-tests/**)",
-      "Bash(git ls-remote *)"
+      "Edit(/.claude/skills/run-tests/**)"
     ]
   }
 }
