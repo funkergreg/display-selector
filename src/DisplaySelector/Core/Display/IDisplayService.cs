@@ -14,6 +14,9 @@ public interface IDisplayService
     /// <summary>Decode the current displays for diagnostics (stable key, EDID, friendly, primary, resolution, orientation).</summary>
     IReadOnlyList<DisplayTarget> GetCurrentDisplays();
 
+    /// <summary>Stable ids of every connected display, active or not (empty if the query fails).</summary>
+    IReadOnlySet<string> GetConnectedTargetIds();
+
     /// <summary>Validate (without applying) that the current configuration is settable — exercises the apply path safely.</summary>
     bool ValidateCurrent();
 
@@ -22,4 +25,11 @@ public interface IDisplayService
 
     /// <summary>Apply a saved configuration, remapping onto live hardware (port-first / LUID fixup). Best-effort.</summary>
     DisplayApplyResult Apply(DisplayConfig config);
+
+    /// <summary>
+    /// True when the live layout is the saved one in every detail the saved configuration holds: the same
+    /// displays, duplicate/extend grouping, desktop positions, resolutions, rotation, scaling and refresh
+    /// rate. False whenever in doubt (a stale or undecodable capture), so the caller applies instead.
+    /// </summary>
+    bool MatchesCurrent(DisplayConfig config);
 }

@@ -98,23 +98,15 @@ public sealed class CcdDisplayService : IDisplayService
             return DisplayApplyResult.Fail("Profile has no captured display configuration.");
         }
 
-        DISPLAYCONFIG_PATH_INFO[] paths;
-        DISPLAYCONFIG_MODE_INFO[] modes;
-        try
+        if (!TryDecode(config, out var paths, out var modes))
         {
-            paths = CcdBlob.Decode<DISPLAYCONFIG_PATH_INFO>(config.PathInfo);
-            modes = CcdBlob.Decode<DISPLAYCONFIG_MODE_INFO>(config.ModeInfo);
-        }
-        catch (Exception ex)
-        {
-            _log.Error("Failed to decode stored display blobs.", ex);
             return DisplayApplyResult.Fail("Stored display configuration is corrupt.");
         }
 
         var unavailable = FindUnavailableTargets(config.Targets);
         if (unavailable.Count > 0)
         {
-            _log.Info($"Apply: {unavailable.Count} saved target(s) not currently present: {string.Join(", ", unavailable)}");
+            _log.Info($"Apply: {unavailable.Count} saved target(s) not currently present: {string.Join(", ", unavailable.Select(t => $"{t.Friendly} ({t.StableId})"))}");
         }
 
         // First attempt: apply the supplied config directly (works in-session and often via the CCD database).
@@ -142,12 +134,101 @@ public sealed class CcdDisplayService : IDisplayService
         return DisplayApplyResult.Fail($"SetDisplayConfig returned {hr}.", unavailable);
     }
 
-    private bool QueryActive(out DISPLAYCONFIG_PATH_INFO[] paths, out DISPLAYCONFIG_MODE_INFO[] modes)
+    public bool MatchesCurrent(DisplayConfig config)
+    {
+        if (!TryDecode(config, out var saved, out var savedModes) ||
+            !QueryActive(out var live, out var liveModes) ||
+            live.Length != saved.Length)
+        {
+            return false;
+        }
+
+        // After a reboot the saved adapter LUIDs are stale: compare against the current adapter instead.
+        // When that isn't possible (multi-GPU) this reports "different", and the profile is simply applied.
+        if (saved.Any(s => FindLive(live, s) < 0) && !TryRemapToCurrentAdapters(saved, savedModes, live))
+        {
+            return false;
+        }
+
+        foreach (var s in saved)
+        {
+            var index = FindLive(live, s);
+            if (index < 0)
+            {
+                return false;
+            }
+
+            var l = live[index];
+            if (s.targetInfo.rotation != l.targetInfo.rotation ||
+                s.targetInfo.scaling != l.targetInfo.scaling ||
+                !SameRate(s.targetInfo.refreshRate, l.targetInfo.refreshRate) ||
+                SourceModeOf(s, savedModes) is not { } a ||
+                SourceModeOf(l, liveModes) is not { } b ||
+                a.width != b.width || a.height != b.height ||
+                a.position.x != b.position.x || a.position.y != b.position.y)
+            {
+                return false;
+            }
+        }
+
+        // Duplicate vs extend: the same targets must share a source in both layouts.
+        return SourceGroups(saved).SetEquals(SourceGroups(live));
+    }
+
+    // Decodes the saved blobs; false (logged) when they're missing or corrupt.
+    private bool TryDecode(DisplayConfig config, out DISPLAYCONFIG_PATH_INFO[] paths, out DISPLAYCONFIG_MODE_INFO[] modes)
+    {
+        paths = Array.Empty<DISPLAYCONFIG_PATH_INFO>();
+        modes = Array.Empty<DISPLAYCONFIG_MODE_INFO>();
+        if (string.IsNullOrEmpty(config.PathInfo) || string.IsNullOrEmpty(config.ModeInfo))
+        {
+            return false;
+        }
+
+        try
+        {
+            paths = CcdBlob.Decode<DISPLAYCONFIG_PATH_INFO>(config.PathInfo);
+            modes = CcdBlob.Decode<DISPLAYCONFIG_MODE_INFO>(config.ModeInfo);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _log.Error("Failed to decode stored display blobs.", ex);
+            return false;
+        }
+    }
+
+    private static int FindLive(DISPLAYCONFIG_PATH_INFO[] live, DISPLAYCONFIG_PATH_INFO saved) =>
+        Array.FindIndex(live, l =>
+            l.targetInfo.id == saved.targetInfo.id && l.targetInfo.adapterId == saved.targetInfo.adapterId);
+
+    private static bool SameRate(DISPLAYCONFIG_RATIONAL x, DISPLAYCONFIG_RATIONAL y) =>
+        (ulong)x.Numerator * y.Denominator == (ulong)y.Numerator * x.Denominator;
+
+    private static DISPLAYCONFIG_SOURCE_MODE? SourceModeOf(DISPLAYCONFIG_PATH_INFO path, DISPLAYCONFIG_MODE_INFO[] modes)
+    {
+        var idx = path.sourceInfo.modeInfoIdx;
+        return idx < modes.Length && modes[idx].infoType == DISPLAYCONFIG_MODE_INFO_TYPE.Source
+            ? modes[idx].modeInfo.sourceMode
+            : null;
+    }
+
+    // One entry per source: the sorted target ids it drives (several for a duplicated display).
+    private static HashSet<string> SourceGroups(DISPLAYCONFIG_PATH_INFO[] paths) =>
+        paths
+            .GroupBy(p => (p.sourceInfo.adapterId, p.sourceInfo.id))
+            .Select(g => string.Join(",", g.Select(p => p.targetInfo.id).OrderBy(id => id)))
+            .ToHashSet();
+
+    private bool QueryActive(out DISPLAYCONFIG_PATH_INFO[] paths, out DISPLAYCONFIG_MODE_INFO[] modes) =>
+        QueryPaths(CcdNative.QDC_ONLY_ACTIVE_PATHS, out paths, out modes);
+
+    private bool QueryPaths(uint flags, out DISPLAYCONFIG_PATH_INFO[] paths, out DISPLAYCONFIG_MODE_INFO[] modes)
     {
         paths = Array.Empty<DISPLAYCONFIG_PATH_INFO>();
         modes = Array.Empty<DISPLAYCONFIG_MODE_INFO>();
 
-        var hr = CcdNative.GetDisplayConfigBufferSizes(CcdNative.QDC_ONLY_ACTIVE_PATHS, out var pathCount, out var modeCount);
+        var hr = CcdNative.GetDisplayConfigBufferSizes(flags, out var pathCount, out var modeCount);
         if (hr != 0)
         {
             _log.Error($"GetDisplayConfigBufferSizes failed: {hr} (0x{hr:X8}).");
@@ -156,7 +237,7 @@ public sealed class CcdDisplayService : IDisplayService
 
         var p = new DISPLAYCONFIG_PATH_INFO[pathCount];
         var m = new DISPLAYCONFIG_MODE_INFO[modeCount];
-        hr = CcdNative.QueryDisplayConfig(CcdNative.QDC_ONLY_ACTIVE_PATHS, ref pathCount, p, ref modeCount, m, IntPtr.Zero);
+        hr = CcdNative.QueryDisplayConfig(flags, ref pathCount, p, ref modeCount, m, IntPtr.Zero);
         if (hr != 0)
         {
             _log.Error($"QueryDisplayConfig failed: {hr} (0x{hr:X8}).");
@@ -221,55 +302,78 @@ public sealed class CcdDisplayService : IDisplayService
         DISPLAYCONFIG_PATH_INFO path,
         DISPLAYCONFIG_MODE_INFO[] modes)
     {
-        var idx = path.sourceInfo.modeInfoIdx;
-        if (idx == CcdNative.DISPLAYCONFIG_PATH_MODE_IDX_INVALID || idx >= modes.Length)
-        {
-            return (null, false);
-        }
-
-        var mode = modes[idx];
-        if (mode.infoType != DISPLAYCONFIG_MODE_INFO_TYPE.Source)
-        {
-            return (null, false);
-        }
-
-        var source = mode.modeInfo.sourceMode;
-        var resolution = $"{source.width}x{source.height}";
-        var isPrimary = source.position is { x: 0, y: 0 };
-        return (resolution, isPrimary);
+        return SourceModeOf(path, modes) is { } source
+            ? ($"{source.width}x{source.height}", source.position is { x: 0, y: 0 })
+            : (null, false);
     }
 
-    private List<string> FindUnavailableTargets(IReadOnlyList<DisplayTarget> savedTargets)
+    // A saved target is "unavailable" only when it isn't CONNECTED — not merely inactive. Checking
+    // active paths here (as this once did) flagged every display the profile was about to turn on
+    // (e.g. the TV when switching from the desk), so "Displays not available" fired on every switch.
+    private List<DisplayTarget> FindUnavailableTargets(IReadOnlyList<DisplayTarget> savedTargets)
     {
-        if (savedTargets.Count == 0 || !QueryActive(out var paths, out _))
+        if (savedTargets.Count == 0)
         {
-            return new List<string>();
+            return new List<DisplayTarget>();
         }
 
-        var present = new HashSet<string>();
+        var connected = GetConnectedTargetIds();
+        if (connected.Count == 0)
+        {
+            return new List<DisplayTarget>(); // query failed — don't guess (matches the previous failure behaviour)
+        }
+
+        return savedTargets.Where(t => !connected.Contains(t.StableId)).ToList();
+    }
+
+    /// <summary>
+    /// Port keys of every display Windows reports as connected (active or not). <c>QDC_ALL_PATHS</c>
+    /// lists every source×target combination, so targets are de-duplicated before the per-target name
+    /// lookup; <c>targetAvailable</c> is false for a target with nothing attached — including a TV that
+    /// dropped HDMI hot-plug-detect when powered off, which is exactly the case worth reporting.
+    /// Empty if the query fails. (No active-paths fallback: that would bring back the false warning above.)
+    /// </summary>
+    public IReadOnlySet<string> GetConnectedTargetIds()
+    {
+        var keys = new HashSet<string>();
+        if (!QueryPaths(CcdNative.QDC_ALL_PATHS, out var paths, out _))
+        {
+            return keys;
+        }
+
+        var seen = new HashSet<(LUID Adapter, uint Id)>();
         foreach (var path in paths)
         {
-            var name = GetTargetName(path.targetInfo.adapterId, path.targetInfo.id);
-            present.Add(PortKey(name.outputTechnology, name.connectorInstance));
+            var target = path.targetInfo;
+            if (target.targetAvailable == 0)
+            {
+                continue;
+            }
+            if (!seen.Add((target.adapterId, target.id)))
+            {
+                continue;
+            }
+
+            var name = GetTargetName(target.adapterId, target.id);
+            keys.Add(PortKey(name.outputTechnology, name.connectorInstance));
         }
 
-        return savedTargets
-            .Where(t => !present.Contains(t.StableId))
-            .Select(t => t.Friendly)
-            .ToList();
+        _log.Debug($"Connected display ports: {string.Join(", ", keys)}");
+        return keys;
     }
 
-    private bool TryRemapToCurrentAdapters(DISPLAYCONFIG_PATH_INFO[] paths, DISPLAYCONFIG_MODE_INFO[] modes)
+    // current: the live active paths, when the caller already queried them.
+    private bool TryRemapToCurrentAdapters(
+        DISPLAYCONFIG_PATH_INFO[] paths,
+        DISPLAYCONFIG_MODE_INFO[] modes,
+        DISPLAYCONFIG_PATH_INFO[]? current = null)
     {
-        if (!QueryActive(out var current, out _))
+        if (current is null && !QueryActive(out current, out _))
         {
             return false;
         }
 
-        var luids = current
-            .Select(p => (p.targetInfo.adapterId.LowPart, p.targetInfo.adapterId.HighPart))
-            .Distinct()
-            .ToList();
+        var luids = current.Select(p => p.targetInfo.adapterId).Distinct().ToList();
 
         // M2 supports the single-GPU fast path: replace every stale LUID with the one current adapter.
         // Multi-GPU per-target remap is handled in M3 (activation), where it can be tested across reboots.

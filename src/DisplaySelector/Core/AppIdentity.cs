@@ -4,7 +4,7 @@ namespace DisplaySelector.Core;
 /// Single source of truth for the app's identity. The <see cref="AppUserModelId"/> must match the
 /// Start Menu shortcut's AUMID created by the installer (and, for a future MSIX build, the package
 /// manifest's Application Id) so toast notifications attribute correctly.
-/// See docs/microsoft-store-distribution-roadmap.md.
+/// See .docs/microsoft-store-distribution-roadmap.md.
 /// </summary>
 public static class AppIdentity
 {
@@ -19,4 +19,8 @@ public static class AppIdentity
     public const string ProjectUrl = "https://github.com/funkergreg/display-selector";
 
     public const string ProjectSiteUrl = "https://display-selector.org";
+
+    public const string AuthorName = "FunkerGreg";
+
+    public const string DonateUrl = "https://buymeacoffee.com/funkergreg";
 }

@@ -2,7 +2,7 @@
 ; Per-user install (no admin): app under per-user Program Files, HKCU Run key removed on uninstall,
 ; and all generated data under %LOCALAPPDATA%\DisplaySelector purged.
 ;
-; SILENT INSTALL (required for a Microsoft Store EXE submission — see docs/microsoft-store-distribution-roadmap.md):
+; SILENT INSTALL (required for a Microsoft Store EXE submission — see .docs/microsoft-store-distribution-roadmap.md):
 ;   DisplaySelectorSetup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
 ; SILENT UNINSTALL:
 ;   "%LOCALAPPDATA%\Programs\Display-Selector\unins000.exe" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
@@ -93,4 +93,32 @@ function InitializeUninstall(): Boolean;
 begin
   StopRunningApp();
   Result := True;
+end;
+
+{ Best-effort removal of the desktop game shortcuts the app created (it records their paths in
+  shortcuts.txt, UTF-8 with BOM, one per line). Only .lnk files that still exist at a recorded path
+  are deleted; anything moved, deleted, or failing is skipped so the uninstall always succeeds.
+  Runs at usUninstall, i.e. before [UninstallDelete] purges the data folder holding the list. }
+procedure DeleteTrackedShortcuts;
+var
+  Lines: TArrayOfString;
+  I: Integer;
+  Path: String;
+begin
+  if not LoadStringsFromFile(ExpandConstant('{localappdata}\DisplaySelector\shortcuts.txt'), Lines) then
+    Exit;
+  for I := 0 to GetArrayLength(Lines) - 1 do
+  begin
+    Path := Trim(Lines[I]);
+    if (Length(Path) > 0) and (Path[1] = #$FEFF) then
+      Delete(Path, 1, 1);
+    if (CompareText(ExtractFileExt(Path), '.lnk') = 0) and FileExists(Path) then
+      DeleteFile(Path);
+  end;
+end;
+
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+begin
+  if CurUninstallStep = usUninstall then
+    DeleteTrackedShortcuts();
 end;

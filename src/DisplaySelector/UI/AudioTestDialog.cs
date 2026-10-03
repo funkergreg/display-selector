@@ -16,7 +16,7 @@ internal sealed class AudioTestDialog : Form
     private readonly ListBox _list = new() { Dock = DockStyle.Fill, IntegralHeight = false };
     private readonly Button _playButton = new() { Text = "Play tone", Width = 100 };
     private readonly Button _setDefaultButton = new() { Text = "Set as default", Width = 110 };
-    private readonly Button _assignButton = new() { Text = "Assign to profile…", Width = 130 };
+    private readonly Button _assignButton = new() { Text = "Assign to Profile…", Width = 130 };
     private readonly Button _refreshButton = new() { Text = "Refresh", Width = 80 };
 
     private List<AudioEndpoint> _endpoints = new();
@@ -97,7 +97,8 @@ internal sealed class AudioTestDialog : Form
     private AudioEndpoint? Selected =>
         _list.SelectedIndex >= 0 && _list.SelectedIndex < _endpoints.Count ? _endpoints[_list.SelectedIndex] : null;
 
-    private void PlaySelected()
+    // async void: a UI event handler; PlayConfirmationAsync never throws.
+    private async void PlaySelected()
     {
         if (Selected is not { } endpoint)
         {
@@ -107,11 +108,9 @@ internal sealed class AudioTestDialog : Form
         _playButton.Enabled = false;
         _log.Info($"Audio test: playing tone on '{endpoint.FriendlyName}'.");
 
-        // Play off the UI thread so the window stays responsive; re-enable the button when done.
-        Task.Run(() => _audio.PlayConfirmation(endpoint.Id))
-            .ContinueWith(
-                _ => _playButton.Enabled = true,
-                TaskScheduler.FromCurrentSynchronizationContext());
+        // Plays on a background thread, so the window stays responsive; re-enable the button when done.
+        await _audio.PlayConfirmationAsync(endpoint.Id);
+        _playButton.Enabled = true;
     }
 
     private void SetSelectedAsDefault()
@@ -135,7 +134,7 @@ internal sealed class AudioTestDialog : Form
         var ok = _audio.SetDefaultOutputDevice(endpoint.Id);
         if (ok)
         {
-            _audio.PlayConfirmation(endpoint.Id);
+            _ = _audio.PlayConfirmationAsync(endpoint.Id); // background; never blocks the window
         }
         else
         {

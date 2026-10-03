@@ -4,8 +4,9 @@ namespace DisplaySelector.App;
 
 /// <summary>
 /// A hidden, top-level message window. Top-level (not message-only) so it can receive the
-/// broadcast <c>RegisterWindowMessage</c> a second instance posts; WS_EX_TOOLWINDOW + invisible
-/// keeps it out of Alt-Tab and the taskbar. (In M3 the hotkey service will use its own window.)
+/// broadcast <c>RegisterWindowMessage</c> a second instance posts, and so a second instance can find it
+/// by caption to forward a game shortcut's arguments (<see cref="CommandChannel"/>). WS_EX_TOOLWINDOW +
+/// invisible keeps it out of Alt-Tab and the taskbar.
 /// </summary>
 internal sealed class HiddenWindow : NativeWindow, IDisposable
 {
@@ -13,12 +14,15 @@ internal sealed class HiddenWindow : NativeWindow, IDisposable
 
     public event Action? MessageReceived;
 
+    /// <summary>Command-line arguments forwarded by a second launch. Raised on the UI thread, after the send returns.</summary>
+    public event Action<string[]>? CommandReceived;
+
     public HiddenWindow(uint watchedMessage)
     {
         _watchedMessage = watchedMessage;
         var cp = new CreateParams
         {
-            Caption = "DisplaySelectorListener",
+            Caption = CommandChannel.ListenerCaption,
             ExStyle = NativeMethods.WS_EX_TOOLWINDOW,
         };
         CreateHandle(cp);
@@ -29,6 +33,22 @@ internal sealed class HiddenWindow : NativeWindow, IDisposable
         if ((uint)m.Msg == _watchedMessage)
         {
             MessageReceived?.Invoke();
+        }
+        else if (m.Msg == NativeMethods.WM_COPYDATA && CommandChannel.TryRead(m.LParam, out var args))
+        {
+            // Ack and return immediately so the sending process isn't blocked while we switch displays;
+            // the work runs as a posted callback on this (UI) thread.
+            m.Result = 1;
+            var context = SynchronizationContext.Current;
+            if (context is null)
+            {
+                CommandReceived?.Invoke(args);
+            }
+            else
+            {
+                context.Post(_ => CommandReceived?.Invoke(args), null);
+            }
+            return;
         }
 
         base.WndProc(ref m);

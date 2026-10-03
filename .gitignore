@@ -20,7 +20,13 @@ installer/Output/
 [Tt]humbs.db
 desktop.ini
 
-# Developer Scratchpad
+# Developer Scratchpad and Design/Plan remain local
 **/TODO.md
+**/DESIGN.md
+# Screenshots
+.docs/*.png
 **/visual-review.png
+# logs
+*.log
+# Other Dev items
 *.DMP

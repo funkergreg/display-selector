@@ -42,32 +42,63 @@ internal static class ProfileMatching
     /// coarser than <see cref="FindDuplicate"/>: it keys only on the set of connected display
     /// StableIds + which one is primary (ignoring EDID/resolution/orientation) plus the default audio
     /// endpoint, so a profile still reads as "active" when only resolution or orientation has drifted.
-    /// A profile with no captured display matches on audio alone (audio-only profiles).
+    /// A profile with no captured display matches on audio alone (audio-only profiles). When several
+    /// profiles match coarsely, <paramref name="preferLive"/> (the strict "fully in effect" check) picks
+    /// among them, so the check mark lands on the same profile that "Already on" reports.
     /// </summary>
     public static Profile? FindActive(
         IEnumerable<Profile> profiles,
         IReadOnlyList<DisplayTarget> currentDisplays,
-        string? currentAudioId)
+        string? currentAudioId,
+        Func<Profile, bool>? preferLive = null)
     {
-        var currentKeys = currentDisplays.Select(d => d.StableId).OrderBy(x => x).ToList();
-        var currentPrimary = currentDisplays.FirstOrDefault(d => d.Primary)?.StableId;
+        var candidates = profiles.Where(p =>
+            (p.Audio is not { } audio || audio.EndpointId == currentAudioId) &&
+            (p.Display is not { } display || DisplayLayoutMatches(display, currentDisplays)))
+            .ToList();
 
-        return profiles.FirstOrDefault(p =>
+        return candidates.Count > 1 && preferLive is not null
+            ? candidates.FirstOrDefault(preferLive) ?? candidates[0]
+            : candidates.FirstOrDefault();
+    }
+
+    /// <summary>
+    /// The coarse layout match used by <see cref="FindActive"/>: same set of display StableIds and the
+    /// same primary. Also used to detect when a just-applied layout has settled before launching a game.
+    /// </summary>
+    public static bool DisplayLayoutMatches(DisplayConfig display, IReadOnlyList<DisplayTarget> currentDisplays)
+    {
+        var keys = display.Targets.Select(t => t.StableId).OrderBy(x => x);
+        var currentKeys = currentDisplays.Select(d => d.StableId).OrderBy(x => x);
+        var primary = display.Targets.FirstOrDefault(t => t.Primary)?.StableId;
+        var currentPrimary = currentDisplays.FirstOrDefault(d => d.Primary)?.StableId;
+        return primary == currentPrimary && keys.SequenceEqual(currentKeys);
+    }
+
+    /// <summary>
+    /// Stricter than <see cref="DisplayLayoutMatches"/> (which stays coarse for the menu's check mark):
+    /// a resolution- or rotation-only difference counts as a mismatch. Saved resolution/orientation are
+    /// compared only when present (older captures may lack them). Used to tell when an applied layout
+    /// has settled.
+    /// </summary>
+    public static bool ExactLayoutMatches(DisplayConfig target, IReadOnlyList<DisplayTarget> current)
+    {
+        if (!DisplayLayoutMatches(target, current))
         {
-            if (p.Audio is { } audio && audio.EndpointId != currentAudioId)
+            return false;
+        }
+
+        foreach (var saved in target.Targets)
+        {
+            var live = current.FirstOrDefault(d => d.StableId == saved.StableId);
+            if (live is null ||
+                (saved.Resolution is not null && saved.Resolution != live.Resolution) ||
+                (saved.Orientation is not null && saved.Orientation != live.Orientation))
             {
                 return false;
             }
-            if (p.Display is { } display)
-            {
-                var keys = display.Targets.Select(t => t.StableId).OrderBy(x => x).ToList();
-                var primary = display.Targets.FirstOrDefault(t => t.Primary)?.StableId;
-                if (!keys.SequenceEqual(currentKeys) || primary != currentPrimary)
-                {
-                    return false;
-                }
-            }
-            return true;
-        });
+        }
+
+        return true;
     }
 }

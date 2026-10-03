@@ -19,6 +19,9 @@ public sealed class CoreAudioService : IAudioService
     private static readonly TimeSpan ToneDuration = TimeSpan.FromMilliseconds(150);
     private static readonly TimeSpan ToneGap = TimeSpan.FromMilliseconds(40);
 
+    // The chime lasts ~0.6 s; anything far beyond that is a stalled endpoint.
+    private static readonly TimeSpan PlaybackTimeout = TimeSpan.FromSeconds(3);
+
     private readonly ILog _log;
 
     public CoreAudioService(ILog log) => _log = log;
@@ -50,6 +53,20 @@ public sealed class CoreAudioService : IAudioService
 
         using var device = enumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
         return new AudioEndpoint(device.ID, device.FriendlyName, true);
+    }
+
+    public bool IsDeviceActive(string endpointId)
+    {
+        try
+        {
+            using var enumerator = new MMDeviceEnumerator();
+            using var device = enumerator.GetDevice(endpointId);
+            return device.State == DeviceState.Active;
+        }
+        catch (Exception)
+        {
+            return false; // not present (yet)
+        }
     }
 
     public bool SetDefaultOutputDevice(string endpointId)
@@ -85,17 +102,56 @@ public sealed class CoreAudioService : IAudioService
         }
     }
 
-    public void PlayConfirmation(string? endpointId = null)
+    public async Task PlayConfirmationAsync(string? endpointId = null)
     {
-        using var enumerator = new MMDeviceEnumerator();
-        var device = ResolveDevice(enumerator, endpointId);
+        // WASAPI runs on its own background thread and the returned task is bounded. An endpoint that
+        // is still coming up (a TV's HDMI audio right after a display switch) can accept the stream but
+        // never consume it, so playback never ends; waiting on it inline hung the UI.
+        var deadline = DateTime.UtcNow + PlaybackTimeout;
+        var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var playback = new Thread(() =>
+        {
+            PlayChime(endpointId, deadline);
+            done.TrySetResult();
+        })
+        {
+            IsBackground = true,
+            Name = "Confirmation tone",
+        };
+        playback.Start();
+
         try
         {
+            await done.Task.WaitAsync(PlaybackTimeout);
+        }
+        catch (TimeoutException)
+        {
+            _log.Error($"Confirmation tone didn't finish within {PlaybackTimeout.TotalSeconds:0} s; abandoning it (the device may still be starting up).");
+        }
+    }
+
+    private void PlayChime(string? endpointId, DateTime deadline)
+    {
+        try
+        {
+            using var enumerator = new MMDeviceEnumerator();
+            using var device = ResolveDevice(enumerator, endpointId);
             using var output = new WasapiOut(device, AudioClientShareMode.Shared, useEventSync: false, latency: 100);
             output.Init(BuildChime());
+            if (DateTime.UtcNow > deadline)
+            {
+                return; // setup stalled past the caller's wait; a late chime would confuse, so skip it
+            }
+
             output.Play();
             while (output.PlaybackState == PlaybackState.Playing)
             {
+                if (DateTime.UtcNow > deadline)
+                {
+                    // A stalled stream; leave this background thread to Stop/Dispose it (which can block).
+                    _log.Debug($"Confirmation tone stalled on '{device.FriendlyName}'.");
+                    return;
+                }
                 Thread.Sleep(20);
             }
 
@@ -104,10 +160,6 @@ public sealed class CoreAudioService : IAudioService
         catch (Exception ex)
         {
             _log.Error("PlayConfirmation failed.", ex);
-        }
-        finally
-        {
-            device.Dispose();
         }
     }
 
