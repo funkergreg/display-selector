@@ -12,12 +12,19 @@ public interface IAudioService
     /// <summary>The current default render endpoint (multimedia role), or null if none.</summary>
     AudioEndpoint? GetDefaultOutputDevice();
 
+    /// <summary>Whether the endpoint exists and is active (plugged in / powered on). Never throws.</summary>
+    bool IsDeviceActive(string endpointId);
+
     /// <summary>
     /// Set the default output endpoint for ALL roles (Console, Multimedia, Communications) so every
     /// app and System Sounds follows. Returns false (and logs) on failure; never throws.
     /// </summary>
     bool SetDefaultOutputDevice(string endpointId);
 
-    /// <summary>Render a short confirmation tone to the given endpoint (or the default when null). Blocks until done.</summary>
-    void PlayConfirmation(string? endpointId = null);
+    /// <summary>
+    /// Render a short confirmation tone to the given endpoint (or the default when null) on a background
+    /// thread. Completes when it's done, or after a few seconds at most: a stalled endpoint is
+    /// abandoned, never waited on forever. Never throws.
+    /// </summary>
+    Task PlayConfirmationAsync(string? endpointId = null);
 }

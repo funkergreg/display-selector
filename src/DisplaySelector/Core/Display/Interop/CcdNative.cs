@@ -121,8 +121,9 @@ internal enum DISPLAYCONFIG_DEVICE_INFO_TYPE : int
     GetAdapterName = 4,
 }
 
+// A record struct only for value equality (adapter comparisons/keys); the layout is still two fields.
 [StructLayout(LayoutKind.Sequential)]
-internal struct LUID
+internal record struct LUID
 {
     public uint LowPart;
     public int HighPart;

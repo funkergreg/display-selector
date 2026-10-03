@@ -20,4 +20,7 @@ public static class AppPaths
     public static string ProfilesFile => Path.Combine(DataDirectory, "profiles.json");
 
     public static string ConfigFile => Path.Combine(DataDirectory, "config.json");
+
+    /// <summary>Game shortcuts the app created, for best-effort removal on uninstall (read by setup.iss).</summary>
+    public static string ShortcutsFile => Path.Combine(DataDirectory, "shortcuts.txt");
 }

@@ -1,4 +1,5 @@
 using DisplaySelector.Core.Display;
+using DisplaySelector.Core.Profiles;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -34,6 +35,18 @@ public class CcdDisplayServiceIntegrationTests
     }
 
     [Fact]
+    public void A_fresh_capture_matches_the_live_layout_and_a_corrupt_one_does_not()
+    {
+        var service = new CcdDisplayService(new NullLog());
+
+        var config = service.Capture();
+
+        Assert.True(service.MatchesCurrent(config)); // what "skip when live" relies on
+        Assert.False(service.MatchesCurrent(new DisplayConfig { PathInfo = "AAAA", ModeInfo = "AAAA" }));
+        Assert.False(service.MatchesCurrent(new DisplayConfig()));
+    }
+
+    [Fact]
     public void Exactly_one_display_is_primary()
     {
         var service = new CcdDisplayService(new NullLog());
@@ -55,6 +68,22 @@ public class CcdDisplayServiceIntegrationTests
 
         // SDC_VALIDATE only — does not change the display configuration.
         Assert.True(service.ValidateCurrent());
+    }
+
+    [Fact]
+    public void Connected_ports_include_every_active_display()
+    {
+        var service = new CcdDisplayService(new NullLog());
+
+        var active = service.GetCurrentDisplays().Select(d => d.StableId).ToList();
+        var connected = service.GetConnectedTargetIds();
+
+        _output.WriteLine($"active:    {string.Join(", ", active)}");
+        _output.WriteLine($"connected: {string.Join(", ", connected)}");
+
+        // Connected-but-inactive displays (e.g. a TV not in the current layout) may add to this set;
+        // an active display missing from it would bring back false "Displays not available" warnings.
+        Assert.All(active, key => Assert.Contains(key, connected));
     }
 
     [Fact]

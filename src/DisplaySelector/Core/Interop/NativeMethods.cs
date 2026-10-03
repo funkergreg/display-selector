@@ -5,7 +5,7 @@ namespace DisplaySelector.Core.Interop;
 /// <summary>
 /// P/Invoke surface. Convention for this repo: source-generated <see cref="LibraryImportAttribute"/>,
 /// UTF-16 (<c>*W</c>) entry points, one small file per subsystem. This file holds the window-messaging
-/// calls used for single-instance signaling.
+/// calls used for single-instance signaling and command forwarding.
 /// </summary>
 internal static partial class NativeMethods
 {
@@ -29,6 +29,25 @@ internal static partial class NativeMethods
     [LibraryImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static partial bool PostMessageW(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+
+    // Command forwarding to the running instance (game shortcuts): WM_COPYDATA to the listener window.
+    public const int WM_COPYDATA = 0x004A;
+    public const uint SMTO_ABORTIFHUNG = 0x0002;
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct COPYDATASTRUCT
+    {
+        public nuint dwData;
+        public int cbData;
+        public IntPtr lpData;
+    }
+
+    [LibraryImport("user32.dll", StringMarshalling = StringMarshalling.Utf16)]
+    public static partial IntPtr FindWindowW(string? lpClassName, string? lpWindowName);
+
+    [LibraryImport("user32.dll")]
+    public static partial IntPtr SendMessageTimeoutW(
+        IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam, uint fuFlags, uint uTimeout, out IntPtr lpdwResult);
 
     [LibraryImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]

@@ -10,7 +10,7 @@ A lightweight, mostly-idle **Windows 11** system-tray utility (open-sourced). It
 
 - **Do NOT `git commit`, and do NOT `git push` — except** the release-publishing step explicitly outlined in the `/build-release` skill (creating a tagged GitHub release and uploading the installer). The developer does all routine commits/pushes as a QC step. You may always run read-only git (`status`, `diff`, `log`).
 - **Windows 11 only** is the test target. Keep code portable (platform behind interfaces) but don't spend effort on other-OS/older-Windows support unless asked.
-- **Platform code lives behind an interface.** Anything touching Win32/COM goes behind `IDisplayService` / `IAudioService` / `IHotkeyService` / `INotificationService` / `IAutoStartManager` / `ILog`, so it stays mockable and swappable.
+- **Platform code lives behind an interface.** Anything touching Win32/COM goes behind `IDisplayService` / `IAudioService` / `IHotkeyService` / `INotificationService` / `IAutoStartManager` / `IShortcutWriter` / `IProcessLauncher` / `ILog`, so it stays mockable and swappable.
 - Prefer few dependencies. Current allowed set: **NAudio** (audio enumeration + WASAPI test playback) and **Microsoft.Toolkit.Uwp.Notifications** (Win11 toasts via the unpackaged compat layer). Logger is hand-rolled. Clear new dependencies with the developer first.
 
 ## Commands
@@ -41,26 +41,40 @@ Program.cs (single-instance Mutex, bootstrap)
        ├─ IHotkeyService  → HotkeyService     (RegisterHotKey on a message-only window)
        ├─ INotificationService → toasts + tray balloon + confirmation tone
        ├─ IAutoStartManager → HKCU Run key
+       ├─ LaunchCoordinator (game shortcuts: resolve profile → activate → DisplaySettleWaiter → IProcessLauncher)
+       ├─ AudioSwitchConfirmer (after activation: waits for the audio device to be ready + default, re-asserts it, then plays the tone off the UI thread)
+       ├─ LauncherCreator ("Create a Launcher…" flow: LauncherTargetPicker → [profile picker] → LauncherDetailsDialog → LauncherSpecBuilder → IShortcutWriter; "Create a Profile Shortcut" skips the picker and the dialog)
+       ├─ ProfileShortcutCleanup (Delete Profile: finds the tracked .lnk files that point at it, offers to delete them)
+       ├─ IShortcutWriter → ShellLinkShortcutWriter (IShellLinkW COM) + ShortcutRegistry (shortcuts.txt)
+       ├─ ProfileManagerForm (Profile Manager window; drives the controller via IProfileActions, refreshed from RebuildMenu)
        └─ ILog → FileLogger (rolling, Info/Debug levels)
 ```
 
-Profile **activation** is one orchestrated sequence in the controller: log → apply display → set default audio (all roles) → play tone on new device → toast + tray update → log result. Failures apply best-effort and are surfaced (toast) + logged. Re-applying the active profile is intentional (the "unstick a frozen Windows display UI" fix).
+**Game shortcuts** (issue #4): a `.lnk` runs `DisplaySelector.exe --profile <id-or-name> [--launch <target>] [--args <args>]` (`LaunchCommand`). This command line is a **public contract**: shortcuts in the wild depend on it, so only add flags, never rename or remove them (unknown flags are ignored). A second launch with arguments forwards them to the running tray via `WM_COPYDATA` to `HiddenWindow` (`CommandChannel`). With no instance running, the launched process becomes the tray and runs the command after startup. Before launching, the tray waits (async, on the UI thread, with a timeout) for the applied display layout to settle. If a profile display wasn't connected at activation (a TV still off), the wait holds the launch open and re-activates the profile when it connects. Each display can trigger that once. The game always launches, even if the profile is missing, activation fails, or the wait times out. Each created `.lnk` path is recorded in `shortcuts.txt` (UTF-8 BOM). The Inno uninstaller deletes the recorded paths best-effort, and **Delete Profile** offers to delete the recorded ones that point at that profile (read back from each `.lnk`).
+
+Profile **activation** is one orchestrated sequence in the controller: skip if the profile is already **live** → log → apply display → set default audio (all roles) → toast + tray update → log result → **confirm the audio asynchronously** (`AudioSwitchConfirmer`). Failures apply best-effort and are surfaced (toast) + logged.
+
+- **Skip when live:** every entry point (hotkey, menu, Profile Manager, Launcher, Profile Shortcut) first checks `ProfileActivator.IsLive`: the default audio device plus the exact saved layout (`IDisplayService.MatchesCurrent`: displays, duplicate/extend, positions, resolution, rotation, refresh rate). This is stricter than the menu's coarse check mark; when several profiles match coarsely, the check mark goes to the live one, so it agrees with "Already on". Switches go through `SwitchToProfile` (repeat-to-force + toast); Launchers call `ApplyProfile` directly. A live profile isn't re-applied (toast "Already on"). Repeating the same profile within 5 s (`ReapplyTracker`) forces a full re-apply, which keeps the "unstick a frozen Windows display UI" fix. A Launcher never forces; with a live profile it launches at once.
+- **Audio confirm:** never play the tone inline or on the UI thread. A TV's HDMI audio endpoint only exists while its display path is active, so right after a display switch it's still arriving. Playing on it stalled WASAPI and hung the app (DESIGN.md §11). The confirmer polls until the device is active and the default, plays the tone (bounded, background thread), and re-asserts the default (max 3×) if Windows hands it to a newly arrived device. It warns only if the device never got ready. The newest activation cancels the previous confirm.
 
 ## Here be dragons (the two fragile areas — keep isolated, test hard)
 
-1. **Display target matching across reboots/power cycles** (`CcdDisplayService`). Adapter LUIDs are **not** stable across reboots. Match targets **port-first** (`outputTechnology` + `connectorInstance`) with **EDID/monitorDevicePath fallback**; persist both. Hard hardware limit: displays that drop HDMI hot-plug-detect when powered off won't be reachable until powered on — handle best-effort + report, don't fight it.
+1. **Display target matching across reboots/power cycles** (`CcdDisplayService`). Adapter LUIDs are **not** stable across reboots. Match targets **port-first** (`outputTechnology` + `connectorInstance`) with **EDID/monitorDevicePath fallback**; persist both. Hard hardware limit: displays that drop HDMI hot-plug-detect when powered off won't be reachable until powered on — handle best-effort + report, don't fight it. "Unavailable" means **not connected** (`QDC_ALL_PATHS` + `targetAvailable`), not merely inactive. Checking only active paths flags every display a profile is about to turn on (the TV when switching from the desk).
 2. **`IPolicyConfig::SetDefaultEndpoint`** (`CoreAudioService`) is **undocumented** COM. Call it for all three roles (`eConsole`, `eMultimedia`, `eCommunications`) so every app + System Sounds follows. Keep all interop in one file behind `IAudioService` for easy replacement.
 
 ## Data & storage
 
-- Location: `%LOCALAPPDATA%\DisplaySelector\` (non-roaming — profiles are hardware-specific). Files: `config.json`, `profiles.json` (+ `.bak`), `logs\`.
+- Location: `%LOCALAPPDATA%\DisplaySelector\` (non-roaming — profiles are hardware-specific). Files: `config.json`, `profiles.json` (+ `.bak`), `shortcuts.txt` (created game shortcuts, for uninstall), `logs\`.
 - JSON, human-readable, with `schemaVersion` for migrations. Writes are atomic (tmp → `File.Replace`) with a retained `.bak`; corrupt/missing files recover from `.bak` or start empty (logged, never throw).
 - Log full resolved settings on **save** and **activation**; at **Debug** level also log full serialized JSON + decoded display targets + audio endpoint IDs + API call traces (this is how data shape is debugged on a test machine).
-- **Uninstall must purge everything** under `%LOCALAPPDATA%\DisplaySelector\` and remove the `Run` key — the Inno uninstaller handles this.
+- **Uninstall must purge everything** under `%LOCALAPPDATA%\DisplaySelector\` and remove the `Run` key. It also deletes the desktop shortcuts listed in `shortcuts.txt` best-effort, and it never fails on them. The Inno uninstaller handles all of this.
 
 ## Conventions
 
 - .NET 10 (`net10.0-windows10.0.19041.0` — the Windows-SDK TFM unlocks the WinRT toast projections), WinForms; nullable enabled; file-scoped namespaces; `async` only where it earns its keep (this app is mostly synchronous + event-driven).
 - Every capability must be reachable from the tray menu (hotkeys are accelerators only). No silent state changes — every action gives visual feedback; the **confirmation tone is reserved for audio-device changes**.
 - Single instance enforced via a named `Mutex`; second launch surfaces the existing menu and exits.
+- **Every window opened from the tray or Profile Manager is single-instance** via `SingleInstanceWindow<T>`. Profile Manager and the audio/display test windows are modeless (so you can save or switch with them open); About is modal. Re-invoking it brings the existing window to the front (restored if minimized) rather than opening a second copy. Short prompts within a command (`TextInputDialog`, `HotkeyCaptureDialog`, `ListPickerDialog`, `LauncherDetailsDialog`, message boxes) are exempt.
+- **App terms are capitalized** in user-facing text (menus can't bold, so capitals mark them): **Profile**, **Launcher** (a desktop `.lnk` that switches to a Profile *and launches* a program) and **Profile Shortcut** (a `.lnk` that only switches). Ordinary words stay lowercase ("audio device", "hotkey"). Code identifiers (`ShortcutSpec`, `IShortcutWriter`, `shortcuts.txt`) and the `--profile/--launch/--args` contract keep their names.
+- Profile labels (`Name : Hotkey` / `Name : No Hotkey`) come from `ProfileLabels.Label` everywhere, so the tray menu, the manager window and the pickers always match.
 - Toasts (unpackaged app) require a registered AppUserModelID + Start Menu shortcut (installer creates the shortcut; app registers AUMID on first run). Fall back to tray balloon if toast registration fails.

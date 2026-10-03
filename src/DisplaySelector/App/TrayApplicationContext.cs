@@ -5,6 +5,7 @@ using DisplaySelector.Core.Activation;
 using DisplaySelector.Core.Audio;
 using DisplaySelector.Core.Display;
 using DisplaySelector.Core.Hotkeys;
+using DisplaySelector.Core.Launch;
 using DisplaySelector.Core.Logging;
 using DisplaySelector.Core.Notifications;
 using DisplaySelector.Core.Profiles;
@@ -18,7 +19,7 @@ namespace DisplaySelector.App;
 /// registration, and activation (delegated to <see cref="ProfileActivator"/>). Every command is
 /// reachable here; hotkeys are accelerators only.
 /// </summary>
-internal sealed class TrayApplicationContext : ApplicationContext
+internal sealed class TrayApplicationContext : ApplicationContext, IProfileActions
 {
     private static readonly string[] DefaultHotkeyKeys = { "F9", "F10", "F11", "F12" };
 
@@ -31,6 +32,11 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private readonly IHotkeyService _hotkeyService;
     private readonly ProfileActivator _activator;
     private readonly IAutoStartManager _autoStart;
+    private readonly LaunchCoordinator _launchCoordinator;
+    private readonly LauncherCreator _launcherCreator;
+    private readonly ProfileShortcutCleanup _shortcutCleanup;
+    private readonly AudioSwitchConfirmer _audioConfirmer;
+    private readonly ReapplyTracker _reapply = new();
     private readonly INotificationService _notifications;
     private readonly HiddenWindow _listener;
     private readonly NotifyIcon _tray;
@@ -41,7 +47,16 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private AppConfig _config;
     private ProfilesDocument _document;
     private int _nextHotkeyId = 1;
-    private AboutDialog? _aboutDialog;
+    private string? _activeProfileId;
+
+    // Every window opened from the tray / manager is single-instance (re-invoking brings it forward).
+    private readonly SingleInstanceWindow<AboutDialog> _aboutWindow = new();
+    private readonly SingleInstanceWindow<ProfileManagerForm> _managerWindow = new();
+    private readonly SingleInstanceWindow<AudioTestDialog> _audioTestWindow = new();
+    private readonly SingleInstanceWindow<DisplayTestDialog> _displayTestWindow = new();
+    private readonly IReadOnlyList<string> _startupArgs;
+    private readonly LatestOperation _launch = new();
+    private readonly LatestOperation _audioConfirm = new();
 
     public TrayApplicationContext(
         FileLogger logger,
@@ -52,7 +67,11 @@ internal sealed class TrayApplicationContext : ApplicationContext
         IHotkeyService hotkeyService,
         ProfileActivator activator,
         IAutoStartManager autoStart,
-        uint surfaceMessage)
+        LaunchCoordinator launchCoordinator,
+        IShortcutWriter shortcutWriter,
+        ShortcutRegistry shortcutRegistry,
+        uint surfaceMessage,
+        IReadOnlyList<string> startupArgs)
     {
         _logger = logger;
         _log = logger;
@@ -63,6 +82,11 @@ internal sealed class TrayApplicationContext : ApplicationContext
         _hotkeyService = hotkeyService;
         _activator = activator;
         _autoStart = autoStart;
+        _launchCoordinator = launchCoordinator;
+        _launcherCreator = new LauncherCreator(shortcutWriter, shortcutRegistry, logger, ShowBalloon, ReportFailure);
+        _shortcutCleanup = new ProfileShortcutCleanup(shortcutRegistry, shortcutWriter, logger);
+        _audioConfirmer = new AudioSwitchConfirmer(audioService, logger);
+        _startupArgs = startupArgs;
 
         // No config file yet => fresh install. Enable auto-start by default (the app is useless when
         // not running in the tray); the user can turn it off from the menu thereafter.
@@ -79,6 +103,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
         _listener = new HiddenWindow(surfaceMessage);
         _listener.MessageReceived += OnSurfaceRequested;
+        _listener.CommandReceived += args => HandleCommandLine(args, "forwarded from a second launch");
 
         _hotkeyService.HotkeyPressed += OnHotkeyPressed;
 
@@ -114,6 +139,19 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
         _log.Info($"Tray application started. {_document.Profiles.Count} profile(s) loaded.");
         TrimWorkingSetSoon();
+
+        // Started by a game shortcut while not already running: run its command once the message loop
+        // (and so the UI synchronization context the launch flow awaits on) is up.
+        if (_startupArgs.Count > 0)
+        {
+            Application.Idle += RunStartupCommandOnce;
+        }
+    }
+
+    private void RunStartupCommandOnce(object? sender, EventArgs e)
+    {
+        Application.Idle -= RunStartupCommandOnce;
+        HandleCommandLine(_startupArgs, "startup");
     }
 
     // Arms (or re-arms) the debounced post-idle working-set trim.
@@ -127,15 +165,28 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
     private void RebuildMenu()
     {
+        _activeProfileId = FindActiveProfileId();
         var old = _tray.ContextMenuStrip;
-        _tray.ContextMenuStrip = BuildMenu();
+        _tray.ContextMenuStrip = BuildMenu(_activeProfileId);
         old?.Dispose();
+
+        // Every change path ends here, so the Profile Manager window stays live whatever the source.
+        _managerWindow.Current?.RefreshProfiles();
     }
 
-    private ContextMenuStrip BuildMenu()
+    // For background changes (the audio confirm finishing): rebuild only if the active profile actually
+    // changed, and never under an open menu, since rebuilding disposes it.
+    private void RefreshIfActiveChanged()
+    {
+        if (_tray.ContextMenuStrip is not { Visible: true } && FindActiveProfileId() != _activeProfileId)
+        {
+            RebuildMenu();
+        }
+    }
+
+    private ContextMenuStrip BuildMenu(string? activeId)
     {
         var menu = new ContextMenuStrip();
-        var activeId = FindActiveProfileId();
 
         var activeName = activeId is null
             ? "Custom (unsaved)"
@@ -145,31 +196,28 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
         if (_document.Profiles.Count == 0)
         {
-            menu.Items.Add(new ToolStripMenuItem("(no profiles yet)") { Enabled = false });
+            menu.Items.Add(new ToolStripMenuItem(ProfileLabels.NoProfiles) { Enabled = false });
         }
         else
         {
             foreach (var profile in _document.Profiles)
             {
-                var label = profile.Hotkey is null
-                    ? $"{profile.Name} : No Hotkey"
-                    : $"{profile.Name} : {HotkeyCodec.Format(profile.Hotkey)}";
-                var item = new ToolStripMenuItem(label)
+                var item = new ToolStripMenuItem(ProfileLabels.Label(profile))
                 {
                     Checked = profile.Id == activeId,
                 };
                 var id = profile.Id;
-                item.Click += (_, _) => ActivateProfile(id);
+                item.Click += (_, _) => SwitchToProfile(id);
                 menu.Items.Add(item);
             }
         }
 
         menu.Items.Add(new ToolStripSeparator());
-        var save = new ToolStripMenuItem("Save current settings as new profile…");
+        var save = new ToolStripMenuItem("Save current settings as new Profile…");
         save.Click += (_, _) => SaveCurrentAsProfile();
         menu.Items.Add(save);
 
-        var saveAudio = new ToolStripMenuItem("Save current audio device as profile…");
+        var saveAudio = new ToolStripMenuItem("Save current audio device as Profile…");
         saveAudio.Click += (_, _) => SaveCurrentAudioAsProfile();
         menu.Items.Add(saveAudio);
 
@@ -206,10 +254,22 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
     private ToolStripMenuItem BuildManageMenu()
     {
-        var manage = new ToolStripMenuItem("Manage profiles");
+        // Clicking the parent opens the window; hovering still opens the submenu (minimal tray workflow).
+        var manage = new ToolStripMenuItem("Manage Profiles");
+        manage.Click += (_, _) =>
+        {
+            _tray.ContextMenuStrip?.Close();
+            ShowProfileManager();
+        };
+
+        var openManager = new ToolStripMenuItem("Open Profile Manager…");
+        openManager.Click += (_, _) => ShowProfileManager();
+        manage.DropDownItems.Add(openManager);
+        manage.DropDownItems.Add(new ToolStripSeparator());
+
         if (_document.Profiles.Count == 0)
         {
-            manage.DropDownItems.Add(new ToolStripMenuItem("(no profiles yet)") { Enabled = false });
+            manage.DropDownItems.Add(new ToolStripMenuItem(ProfileLabels.NoProfiles) { Enabled = false });
             return manage;
         }
 
@@ -231,6 +291,14 @@ internal sealed class TrayApplicationContext : ApplicationContext
             var setAudio = new ToolStripMenuItem("Set audio device…");
             setAudio.Click += (_, _) => SetProfileAudio(id);
             sub.DropDownItems.Add(setAudio);
+
+            var createLauncher = new ToolStripMenuItem("Create a Launcher…");
+            createLauncher.Click += (_, _) => CreateLauncher(id);
+            sub.DropDownItems.Add(createLauncher);
+
+            var createShortcut = new ToolStripMenuItem("Create a Profile Shortcut");
+            createShortcut.Click += (_, _) => CreateProfileShortcut(id);
+            sub.DropDownItems.Add(createShortcut);
 
             sub.DropDownItems.Add(new ToolStripSeparator());
 
@@ -310,23 +378,113 @@ internal sealed class TrayApplicationContext : ApplicationContext
         RebuildMenu();
     }
 
-    private void ActivateProfile(string id)
+    // Hotkey, menu, Profile Manager and Profile Shortcut switches. A profile that's already live is
+    // skipped; asking again within a few seconds forces the re-apply (the unstick fix).
+    private ActivationResult? SwitchToProfile(string id)
     {
-        var profile = FindProfile(id);
-        if (profile is null)
+        if (FindProfile(id) is not { } profile)
         {
-            return;
+            return null;
         }
 
-        var result = _activator.Activate(profile);
+        var result = ApplyProfile(profile, force: _reapply.ShouldForce(id));
+        if (result.AlreadyActive)
+        {
+            _reapply.RecordSkip(id);
+            ShowBalloon($"Already on: {profile.Name}. Switch to it again to re-apply.", ToolTipIcon.Info);
+        }
+        else
+        {
+            _reapply.Reset();
+        }
+        return result;
+    }
 
-        var heading = $"Switched to: {profile.Name}";
-        var detail = result.Messages.Count > 0 ? Environment.NewLine + string.Join(Environment.NewLine, result.Messages) : string.Empty;
-        ShowBalloon(heading + detail, result.Success ? ToolTipIcon.Info : ToolTipIcon.Warning);
+    // Applies a profile (skipped when it's already live and not forced) and surfaces it: toast, tray
+    // text, menu, then the async audio confirm. Launchers call this directly: they never force, and
+    // their outcome toast covers an already-live profile.
+    private ActivationResult ApplyProfile(Profile profile, bool force)
+    {
+        var result = _activator.Activate(profile, force);
+        if (!result.AlreadyActive)
+        {
+            _audioConfirm.Cancel(); // the previous profile's confirm must not outlive this switch
+            ShowBalloon(
+                string.Join(Environment.NewLine, ResultLines(result).Prepend($"Switched to: {profile.Name}")),
+                result.Success ? ToolTipIcon.Info : ToolTipIcon.Warning);
+            _tray.Text = Truncate($"Display-Selector — {profile.Name}", 63);
+        }
 
-        _tray.Text = Truncate($"Display-Selector — {profile.Name}", 63);
         RebuildMenu();
         TrimWorkingSetSoon();
+        if (result.AudioToConfirm is { } audio)
+        {
+            ConfirmAudio(audio);
+        }
+        return result;
+    }
+
+    // What an activation has to tell the user beyond "Switched to": missing displays, then failures.
+    private static IEnumerable<string> ResultLines(ActivationResult result)
+    {
+        if (result.UnavailableDisplays.Count > 0)
+        {
+            yield return $"Displays not available: {string.Join(", ", result.UnavailableDisplays.Select(t => t.Friendly))}";
+        }
+
+        foreach (var message in result.Messages)
+        {
+            yield return message;
+        }
+    }
+
+    // Waits (without blocking the UI) for the audio device to be ready and the default, plays the tone
+    // on it, and warns only if it never got there. The newest switch wins.
+    private void ConfirmAudio(AudioConfig audio) =>
+        RunLatest(
+            _audioConfirm,
+            async token =>
+            {
+                var outcome = await _audioConfirmer.ConfirmAsync(audio, token);
+                if (outcome == AudioConfirmOutcome.NotAvailable)
+                {
+                    ShowBalloon($"Audio device '{audio.FriendlyName}' isn't available. Turn it on, then switch again.", ToolTipIcon.Warning);
+                }
+                else if (outcome == AudioConfirmOutcome.NotDefault)
+                {
+                    ShowBalloon($"Audio device '{audio.FriendlyName}' couldn't stay the default device.", ToolTipIcon.Warning);
+                }
+
+                RefreshIfActiveChanged(); // devices may have come and gone meanwhile
+            },
+            "confirm the audio device");
+
+    // async void: a UI entry point, so every exception is caught here. Starting work in a slot cancels
+    // the work still running there (newest wins); a cancelled run just stops.
+    private async void RunLatest(
+        LatestOperation slot,
+        Func<CancellationToken, Task> work,
+        string failureAction,
+        Action? onCancelled = null)
+    {
+        var operation = slot.Start();
+        try
+        {
+            await work(operation.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            onCancelled?.Invoke();
+        }
+        catch (Exception ex)
+        {
+            ReportFailure(failureAction, ex);
+        }
+        finally
+        {
+            slot.End(operation);
+            TrimWorkingSetSoon();
+        }
     }
 
     // Lowest-numbered "profile-N" not already in use, so the suggested name iterates automatically.
@@ -364,7 +522,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
             {
                 return name;
             }
-            ShowBalloon($"A profile named '{name}' already exists — choose another name.", ToolTipIcon.Warning);
+            ShowBalloon($"A Profile named '{name}' already exists — choose another name.", ToolTipIcon.Warning);
             seed = name; // reopen with what they typed so they can tweak it rather than start over
         }
     }
@@ -374,7 +532,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
     // "display configuration", or "audio device configuration").
     private bool ConfirmDuplicateCapture(string matchName, string configDescription) =>
         MessageBox.Show(
-            $"This {configDescription} already matches profile '{matchName}'. Save another copy anyway?",
+            $"This {configDescription} already matches Profile '{matchName}'. Save another copy anyway?",
             "Duplicate configuration",
             MessageBoxButtons.OKCancel,
             MessageBoxIcon.Warning) == DialogResult.OK;
@@ -406,13 +564,13 @@ internal sealed class TrayApplicationContext : ApplicationContext
             return;
         }
 
-        var name = PromptForUniqueName("Save profile", "Name for this profile:", NextDefaultProfileName());
+        var name = PromptForUniqueName("Save Profile", "Name for this Profile:", NextDefaultProfileName());
         if (name is null)
         {
             return;
         }
 
-        AddAndSaveProfile(name, display, audio, "profile");
+        AddAndSaveProfile(name, display, audio, "Profile");
     }
 
     // Shared tail of the two "Save current …" flows: build the profile, persist, re-register hotkeys,
@@ -455,8 +613,8 @@ internal sealed class TrayApplicationContext : ApplicationContext
         }
 
         var name = PromptForUniqueName(
-            "Save audio profile",
-            $"Name for this audio-only profile (device: {device.FriendlyName}):",
+            "Save audio Profile",
+            $"Name for this audio-only Profile (device: {device.FriendlyName}):",
             NextDefaultProfileName());
         if (name is null)
         {
@@ -464,7 +622,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         }
 
         // Display null: audio-only profile leaves displays untouched on activation.
-        AddAndSaveProfile(name, display: null, audio, "audio-only profile");
+        AddAndSaveProfile(name, display: null, audio, "audio-only Profile");
     }
 
     private void SetProfileAudio(string id)
@@ -494,34 +652,44 @@ internal sealed class TrayApplicationContext : ApplicationContext
             return;
         }
 
-        profile.Audio = new AudioConfig { EndpointId = chosen.Id, FriendlyName = chosen.FriendlyName };
-        _log.Info($"Set audio device for '{profile.Name}' to '{chosen.FriendlyName}'.");
+        SetProfileAudio(profile, chosen);
+    }
+
+    // Saves the profile's new audio device (Set audio device…, or Assign to Profile… from the Audio
+    // test). If the profile is the active one, the device is switched to straight away (with the
+    // confirmation tone), so editing the active profile keeps it active instead of leaving the live
+    // default behind. Choosing the device that's already the default changes nothing, so no tone.
+    private void SetProfileAudio(Profile profile, AudioEndpoint device)
+    {
+        var switching = FindActiveProfileId() == profile.Id && _audioService.GetDefaultOutputDevice()?.Id != device.Id;
+        profile.Audio = new AudioConfig { EndpointId = device.Id, FriendlyName = device.FriendlyName };
+        if (switching)
+        {
+            _audioService.SetDefaultOutputDevice(device.Id);
+        }
+
+        _log.Info($"Set audio device for '{profile.Name}' to '{device.FriendlyName}'{(switching ? " and switched to it" : string.Empty)}.");
         PersistAndRefresh();
-        ShowBalloon($"Set audio for '{profile.Name}' to '{chosen.FriendlyName}'.", ToolTipIcon.Info);
+        ShowBalloon(
+            $"Set audio for '{profile.Name}' to '{device.FriendlyName}'{(switching ? " and switched to it" : string.Empty)}.",
+            ToolTipIcon.Info);
+        if (switching)
+        {
+            ConfirmAudio(profile.Audio);
+        }
     }
 
     private void AssignDeviceToProfile(AudioEndpoint endpoint)
     {
-        if (_document.Profiles.Count == 0)
-        {
-            ShowBalloon("No profiles yet — save one first.", ToolTipIcon.Info);
-            return;
-        }
-
-        var profile = ListPickerDialog<Profile>.Pick(
-            "Assign to profile",
-            $"Set '{endpoint.FriendlyName}' as the audio device for which profile?",
+        var profile = ProfileLabels.Pick(
+            "Assign to Profile",
+            $"Set '{endpoint.FriendlyName}' as the audio device for which Profile?",
             _document.Profiles,
-            p => p.Name);
-        if (profile is null)
+            ShowBalloon);
+        if (profile is not null)
         {
-            return;
+            SetProfileAudio(profile, endpoint);
         }
-
-        profile.Audio = new AudioConfig { EndpointId = endpoint.Id, FriendlyName = endpoint.FriendlyName };
-        _log.Info($"Set '{endpoint.FriendlyName}' as audio device on profile '{profile.Name}'.");
-        PersistAndRefresh();
-        ShowBalloon($"Set '{endpoint.FriendlyName}' on profile '{profile.Name}'.", ToolTipIcon.Info);
     }
 
     private void MoveProfile(string id, int delta)
@@ -553,7 +721,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
             return;
         }
 
-        var name = PromptForUniqueName("Rename profile", "New name:", profile.Name, excludeId: id);
+        var name = PromptForUniqueName("Rename Profile", "New name:", profile.Name, excludeId: id);
         if (name is null || name == profile.Name)
         {
             return;
@@ -574,12 +742,24 @@ internal sealed class TrayApplicationContext : ApplicationContext
             return;
         }
 
-        var confirm = MessageBox.Show(
-            $"Delete profile '{profile.Name}'? This cannot be undone.",
-            "Delete profile",
-            MessageBoxButtons.OKCancel,
+        // Launchers / Profile Shortcuts the app made for this profile: offer to remove them too rather
+        // than leave orphans on the desktop. Found before the profile is removed (they resolve to it).
+        var linked = _shortcutCleanup.Find(profile, _document.Profiles);
+        var question = $"Delete Profile '{profile.Name}'? This cannot be undone.";
+        if (linked.Count > 0)
+        {
+            var items = string.Join(Environment.NewLine, linked.Select(path => $"  •  {Path.GetFileNameWithoutExtension(path)}"));
+            question += $"{Environment.NewLine}{Environment.NewLine}These desktop items use it:{Environment.NewLine}{items}" +
+                        $"{Environment.NewLine}{Environment.NewLine}Delete them too?";
+        }
+
+        // OK (no desktop items) or No keeps the shortcuts; only Yes deletes them.
+        var answer = MessageBox.Show(
+            question,
+            "Delete Profile",
+            linked.Count > 0 ? MessageBoxButtons.YesNoCancel : MessageBoxButtons.OKCancel,
             MessageBoxIcon.Warning);
-        if (confirm != DialogResult.OK)
+        if (answer == DialogResult.Cancel)
         {
             return;
         }
@@ -587,7 +767,13 @@ internal sealed class TrayApplicationContext : ApplicationContext
         _document.Profiles.Remove(profile);
         _log.Info($"Deleted profile '{profile.Name}'.");
         PersistAndRefresh(reregisterHotkeys: true);
-        ShowBalloon($"Deleted profile '{profile.Name}'.", ToolTipIcon.Info);
+
+        var removed = answer == DialogResult.Yes ? _shortcutCleanup.Delete(linked) : 0;
+        ShowBalloon(
+            removed > 0
+                ? $"Deleted Profile '{profile.Name}' and {removed} desktop item{(removed == 1 ? string.Empty : "s")}."
+                : $"Deleted Profile '{profile.Name}'.",
+            ToolTipIcon.Info);
     }
 
     private void SetHotkey(string id)
@@ -686,6 +872,171 @@ internal sealed class TrayApplicationContext : ApplicationContext
         ShowBalloon(balloon, ToolTipIcon.Info);
     }
 
+    // ---- Game shortcuts ------------------------------------------------------------------------
+
+    // A command line at startup, or one forwarded by a second launch (a game shortcut double-clicked
+    // while we're already running).
+    private void HandleCommandLine(IReadOnlyList<string> args, string source)
+    {
+        _log.Info($"Command line ({source}): {string.Join(' ', args.Select(LaunchCommand.Quote))}");
+        var command = LaunchCommand.TryParse(args, out var ignored);
+        if (ignored.Count > 0)
+        {
+            _log.Info($"Ignoring unrecognized argument(s): {string.Join(' ', ignored.Select(LaunchCommand.Quote))}");
+        }
+
+        if (command is null)
+        {
+            ShowBalloon("Launcher not recognized — expected --profile <name> [--launch <target>].", ToolTipIcon.Warning);
+            return;
+        }
+
+        RunLaunchCommand(command);
+    }
+
+    // The settle wait awaits on the UI thread, keeping the tray responsive while displays change.
+    private void RunLaunchCommand(LaunchCommand command)
+    {
+        // A Profile Shortcut (no target) switches like a hotkey. A Launcher never forces a re-apply, and
+        // its outcome toast covers an already-live profile.
+        Func<Profile, ActivationResult?> activate = command.Target is null
+            ? profile => SwitchToProfile(profile.Id)
+            : profile => ApplyProfile(profile, force: false);
+
+        // Newest command wins: a launch still waiting for displays to settle is cancelled.
+        RunLatest(
+            _launch,
+            async token => ShowLaunchOutcome(await _launchCoordinator.RunAsync(command, _document.Profiles, activate, token)),
+            "run the Launcher",
+            () => _log.Info($"Pending launch of '{command.Target}' superseded by a newer shortcut command."));
+    }
+
+    // ApplyProfile already toasted "Switched to"; this replaces it with the combined result.
+    private void ShowLaunchOutcome(LaunchOutcome outcome)
+    {
+        var command = outcome.Command;
+        var targetName = command.TargetDisplayName;
+
+        if (outcome.Profile is null)
+        {
+            var missing = $"This Launcher's Profile '{command.ProfileRef}' no longer exists";
+            var message = !outcome.LaunchAttempted
+                ? $"{missing}."
+                : outcome.Launched
+                    ? $"{missing} — launched {targetName} without switching."
+                    : $"{missing}, and {targetName} couldn't be launched: {outcome.LaunchError}";
+            ShowBalloon(message, ToolTipIcon.Warning);
+            return;
+        }
+
+        if (!outcome.LaunchAttempted)
+        {
+            return; // Profile Shortcut: the activation toast is the whole story
+        }
+
+        if (outcome.Activation?.AlreadyActive == true)
+        {
+            ShowBalloon(
+                outcome.Launched
+                    ? $"Launched {targetName} (already on {outcome.Profile.Name})."
+                    : $"{targetName} couldn't be launched: {outcome.LaunchError}",
+                outcome.Launched ? ToolTipIcon.Info : ToolTipIcon.Warning);
+            return;
+        }
+
+        var warn = outcome.Activation?.Success == false;
+        var lines = new List<string>();
+        if (outcome.Launched)
+        {
+            lines.Add($"Switched to: {outcome.Profile.Name} — launched {targetName}.");
+            if (outcome.ReconnectedDisplays.Count > 0)
+            {
+                lines.Add($"{string.Join(", ", outcome.ReconnectedDisplays.Select(t => t.Friendly))} came on, and the Profile now uses it.");
+            }
+
+            if (outcome.Activation?.UnavailableDisplays.Count > 0)
+            {
+                warn = true; // still off when the wait gave up; the activation message below names them
+            }
+            else if (outcome.Settle.Outcome == SettleOutcome.TimedOut)
+            {
+                lines.Add("Displays were still changing when it started.");
+                warn = true;
+            }
+        }
+        else
+        {
+            lines.Add($"Switched to: {outcome.Profile.Name}, but {targetName} couldn't be launched: {outcome.LaunchError}");
+            warn = true;
+        }
+
+        if (outcome.Activation is { } activation)
+        {
+            lines.AddRange(ResultLines(activation));
+        }
+
+        ShowBalloon(string.Join(Environment.NewLine, lines), warn ? ToolTipIcon.Warning : ToolTipIcon.Info);
+    }
+
+    // Per-profile launcher: file chooser → confirm → desktop launcher (no need to ask for the profile).
+    private void CreateLauncher(string id)
+    {
+        if (FindProfile(id) is { } profile)
+        {
+            _launcherCreator.CreateForProfile(profile, LauncherDialogOwner);
+        }
+    }
+
+    // Profile Shortcut: created straight away (no file chooser, no dialog); it just switches profiles.
+    private void CreateProfileShortcut(string id)
+    {
+        if (FindProfile(id) is { } profile)
+        {
+            _launcherCreator.CreateProfileShortcut(profile, LauncherDialogOwner);
+        }
+    }
+
+    // ---- Profile Manager window ----------------------------------------------------------------
+
+    // Parent launcher dialogs to the manager only while it's on screen: Windows hides windows owned by
+    // a minimized form, so a tray-started flow would otherwise open its file chooser invisibly.
+    private IWin32Window? LauncherDialogOwner =>
+        _managerWindow.Current is { Visible: true, WindowState: not FormWindowState.Minimized } manager ? manager : null;
+
+    private void ShowProfileManager()
+    {
+        _log.Info("Opening Profile Manager window.");
+        _managerWindow.ShowOrActivate(() => new ProfileManagerForm(this), modal: false, TrimWorkingSetSoon);
+    }
+
+    // IProfileActions: thin pass-throughs, so the window and the tray menu run identical operations.
+    IReadOnlyList<Profile> IProfileActions.Profiles => _document.Profiles;
+
+    string? IProfileActions.ActiveProfileId => _activeProfileId;
+
+    void IProfileActions.Activate(string id) => SwitchToProfile(id);
+
+    void IProfileActions.Rename(string id) => RenameProfile(id);
+
+    void IProfileActions.SetHotkey(string id) => SetHotkey(id);
+
+    void IProfileActions.SetAudio(string id) => SetProfileAudio(id);
+
+    void IProfileActions.CreateLauncher(string id) => CreateLauncher(id);
+
+    void IProfileActions.CreateProfileShortcut(string id) => CreateProfileShortcut(id);
+
+    void IProfileActions.Move(string id, int delta) => MoveProfile(id, delta);
+
+    void IProfileActions.Delete(string id) => DeleteProfile(id);
+
+    void IProfileActions.SaveCurrent() => SaveCurrentAsProfile();
+
+    void IProfileActions.SaveCurrentAudio() => SaveCurrentAudioAsProfile();
+
+    void IProfileActions.CreateLauncherAndAssign() =>
+        _launcherCreator.CreateAndAssign(_document.Profiles, LauncherDialogOwner);
+
     // ---- Hotkeys -------------------------------------------------------------------------------
 
     private void RegisterAllHotkeys()
@@ -718,7 +1069,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         // Raised on the UI thread (message-only window), so UI work here is safe.
         if (_hotkeyIdToProfileId.TryGetValue(hotkeyId, out var profileId))
         {
-            ActivateProfile(profileId);
+            SwitchToProfile(profileId);
         }
     }
 
@@ -747,7 +1098,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
     {
         var currentAudioId = _audioService.GetDefaultOutputDevice()?.Id;
         var currentDisplays = _displayService.GetCurrentDisplays();
-        return ProfileMatching.FindActive(_document.Profiles, currentDisplays, currentAudioId)?.Id;
+        return ProfileMatching.FindActive(_document.Profiles, currentDisplays, currentAudioId, _activator.IsLive)?.Id;
     }
 
     // ---- Diagnostics / misc --------------------------------------------------------------------
@@ -764,17 +1115,15 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private void RunAudioTest()
     {
         _log.Info("Opening audio test dialog.");
-        using var dialog = new AudioTestDialog(_audioService, _log, AssignDeviceToProfile);
-        dialog.ShowDialog();
-        TrimWorkingSetSoon();
+        _audioTestWindow.ShowOrActivate(
+            () => new AudioTestDialog(_audioService, _log, AssignDeviceToProfile), modal: false, TrimWorkingSetSoon);
     }
 
     private void RunDisplayTest()
     {
         _log.Info("Opening display test dialog.");
-        using var dialog = new DisplayTestDialog(_displayService, _log);
-        dialog.ShowDialog();
-        TrimWorkingSetSoon();
+        _displayTestWindow.ShowOrActivate(
+            () => new DisplayTestDialog(_displayService, _log), modal: false, TrimWorkingSetSoon);
     }
 
     private void CopyDiagnostics()
@@ -865,26 +1214,8 @@ internal sealed class TrayApplicationContext : ApplicationContext
     {
         // AssemblyVersion is always 4-part (1.1.0.0); show the 3-part product version (1.1.0).
         var version = Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "?";
-        // The tray menu stays clickable while a modal is up — re-focus the open window rather than stack another.
-        if (_aboutDialog is { IsDisposed: false })
-        {
-            _aboutDialog.Activate();
-            return;
-        }
-
         _log.Info($"Showed About (version {version}).");
-        using var dialog = new AboutDialog(version, OpenAboutLink);
-        _aboutDialog = dialog;
-        try
-        {
-            dialog.ShowDialog();
-        }
-        finally
-        {
-            _aboutDialog = null;
-        }
-
-        TrimWorkingSetSoon();
+        _aboutWindow.ShowOrActivate(() => new AboutDialog(version, OpenAboutLink), modal: true, TrimWorkingSetSoon);
     }
 
     private void OpenAboutLink(string url)
@@ -966,6 +1297,13 @@ internal sealed class TrayApplicationContext : ApplicationContext
     {
         if (disposing)
         {
+            Application.Idle -= RunStartupCommandOnce;
+            _launch.Cancel();
+            _audioConfirm.Cancel();
+            _managerWindow.Close();
+            _aboutWindow.Close();
+            _audioTestWindow.Close();
+            _displayTestWindow.Close();
             _trimTimer.Dispose();
             _tray.Dispose();
             _listener.Dispose();
