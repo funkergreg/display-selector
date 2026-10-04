@@ -2,6 +2,7 @@ using System.Runtime.InteropServices;
 using DisplaySelector.Core.Audio.Interop;
 using DisplaySelector.Core.Logging;
 using NAudio.CoreAudioApi;
+using NAudio.CoreAudioApi.Interfaces;
 using NAudio.Wave;
 using NAudio.Wave.SampleProviders;
 
@@ -9,9 +10,10 @@ namespace DisplaySelector.Core.Audio;
 
 /// <summary>
 /// Core Audio implementation: NAudio for enumeration + WASAPI playback; the undocumented
-/// <see cref="IPolicyConfig"/> for setting the default endpoint across all roles.
+/// <see cref="IPolicyConfig"/> for setting the default endpoint across all roles; the documented
+/// <see cref="IMMNotificationClient"/> for change notifications.
 /// </summary>
-public sealed class CoreAudioService : IAudioService
+public sealed class CoreAudioService : IAudioService, IDisposable
 {
     // Three ascending tones spanning an octave rather than one pitch: covering a wider frequency
     // band makes the confirmation audible across more hearing profiles (accessibility).
@@ -24,7 +26,71 @@ public sealed class CoreAudioService : IAudioService
 
     private readonly ILog _log;
 
+    // Notifications need an enumerator that lives as long as the registration (the per-call ones above
+    // are disposed straight away).
+    private MMDeviceEnumerator? _notifyEnumerator;
+    private ChangeListener? _listener;
+    private Action? _defaultDeviceChanged;
+
     public CoreAudioService(ILog log) => _log = log;
+
+    public event Action? DefaultDeviceChanged
+    {
+        add
+        {
+            _defaultDeviceChanged += value;
+            StartNotifications();
+        }
+        remove => _defaultDeviceChanged -= value;
+    }
+
+    private void StartNotifications()
+    {
+        if (_listener is not null)
+        {
+            return;
+        }
+
+        try
+        {
+            _notifyEnumerator = new MMDeviceEnumerator();
+            _listener = new ChangeListener(() => _defaultDeviceChanged?.Invoke());
+            var hr = _notifyEnumerator.RegisterEndpointNotificationCallback(_listener);
+            if (hr != 0)
+            {
+                throw new COMException("RegisterEndpointNotificationCallback failed.", hr);
+            }
+
+            _log.Debug("Listening for audio device changes.");
+        }
+        catch (Exception ex)
+        {
+            // Not fatal: the active Profile is still refreshed after our own switches and on menu open.
+            _log.Error("Couldn't listen for audio device changes.", ex);
+            StopNotifications();
+        }
+    }
+
+    private void StopNotifications()
+    {
+        try
+        {
+            if (_notifyEnumerator is not null && _listener is not null)
+            {
+                _notifyEnumerator.UnregisterEndpointNotificationCallback(_listener);
+            }
+        }
+        catch (Exception ex)
+        {
+            _log.Error("Couldn't stop listening for audio device changes.", ex);
+        }
+
+        _notifyEnumerator?.Dispose();
+        _notifyEnumerator = null;
+        _listener = null;
+    }
+
+    public void Dispose() => StopNotifications();
 
     public IReadOnlyList<AudioEndpoint> GetOutputDevices()
     {
@@ -53,6 +119,12 @@ public sealed class CoreAudioService : IAudioService
 
         using var device = enumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
         return new AudioEndpoint(device.ID, device.FriendlyName, true);
+    }
+
+    public string? GetDefaultOutputDeviceId()
+    {
+        using var enumerator = new MMDeviceEnumerator();
+        return TryGetDefaultId(enumerator);
     }
 
     public bool IsDeviceActive(string endpointId)
@@ -211,5 +283,37 @@ public sealed class CoreAudioService : IAudioService
 
         using var device = enumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
         return device.ID;
+    }
+
+    // Windows calls these on its own worker threads and requires them to return quickly without calling
+    // back into Core Audio, so they only signal; the subscriber re-reads the state on its own thread.
+    private sealed class ChangeListener : IMMNotificationClient
+    {
+        private readonly Action _changed;
+
+        public ChangeListener(Action changed) => _changed = changed;
+
+        public void OnDefaultDeviceChanged(DataFlow flow, Role role, string defaultDeviceId)
+        {
+            if (flow == DataFlow.Render)
+            {
+                _changed();
+            }
+        }
+
+        // An output device arriving or leaving (a TV's HDMI audio coming up) can move the default.
+        public void OnDeviceStateChanged(string deviceId, DeviceState newState) => _changed();
+
+        public void OnDeviceAdded(string pwstrDeviceId)
+        {
+        }
+
+        public void OnDeviceRemoved(string deviceId)
+        {
+        }
+
+        public void OnPropertyValueChanged(string pwstrDeviceId, PropertyKey key)
+        {
+        }
     }
 }

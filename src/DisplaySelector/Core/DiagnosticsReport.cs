@@ -1,6 +1,7 @@
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text;
+using DisplaySelector.Core.Activation;
 using DisplaySelector.Core.Audio;
 using DisplaySelector.Core.Display;
 
@@ -9,14 +10,18 @@ namespace DisplaySelector.Core;
 /// <summary>Builds a plain-text environment + inventory report for pasting into bug reports.</summary>
 public static class DiagnosticsReport
 {
-    public static string Build(IDisplayService display, IAudioService audio)
+    /// <param name="display">Display service.</param>
+    /// <param name="audio">Audio service.</param>
+    /// <param name="activeProfile">The check-marked Profile's name, or null for a custom (unsaved) setup.</param>
+    public static string Build(IDisplayService display, IAudioService audio, string? activeProfile)
     {
         var sb = new StringBuilder();
         sb.AppendLine($"{AppIdentity.AppName} diagnostics");
-        sb.AppendLine($"App version : {Assembly.GetExecutingAssembly().GetName().Version}");
-        sb.AppendLine($"OS          : {RuntimeInformation.OSDescription}");
-        sb.AppendLine($".NET        : {RuntimeInformation.FrameworkDescription}");
-        sb.AppendLine($"Packaged    : {PackageContext.IsPackaged}");
+        sb.AppendLine($"App version    : {Assembly.GetExecutingAssembly().GetName().Version}");
+        sb.AppendLine($"OS             : {RuntimeInformation.OSDescription}");
+        sb.AppendLine($".NET           : {RuntimeInformation.FrameworkDescription}");
+        sb.AppendLine($"Packaged       : {PackageContext.IsPackaged}");
+        sb.AppendLine($"Active Profile : {activeProfile ?? LiveStateTracker.CustomName}");
 
         sb.AppendLine();
         sb.AppendLine("Graphics adapters:");
@@ -32,23 +37,24 @@ public static class DiagnosticsReport
         }
 
         sb.AppendLine();
-        sb.AppendLine("Displays (current):");
-        foreach (var d in display.GetCurrentDisplays())
+        // A leading [x] / [ ] marker (not a trailing note) so "what's in use now" stands out at a glance.
+        sb.AppendLine("Displays ([x] = showing desktop now, [ ] = connected, not in use):");
+        foreach (var row in DisplayInventory.Rows(display.GetCurrentDisplays(), display.GetConnectedDisplays()))
         {
-            var primary = d.Primary ? " | PRIMARY" : string.Empty;
-            sb.AppendLine($"  - {d.Friendly} | port={d.StableId} | {d.Resolution} | {d.Orientation}{primary}");
+            sb.AppendLine($"  {Marker(row.State == DisplayState.Active)} {DisplayInventory.Line(row.Target)}");
         }
 
         sb.AppendLine();
-        sb.AppendLine("Audio output devices:");
+        sb.AppendLine("Audio output devices ([x] = Windows is playing to it now):");
         foreach (var a in audio.GetOutputDevices())
         {
-            var def = a.IsDefault ? " (default)" : string.Empty;
-            sb.AppendLine($"  - {a.FriendlyName}{def} | {a.Id}");
+            sb.AppendLine($"  {Marker(a.IsDefault)} {a.FriendlyName} | {a.Id}");
         }
 
         return sb.ToString();
     }
+
+    private static string Marker(bool inUse) => inUse ? "[x]" : "[ ]";
 
     private static List<string> GetAdapters()
     {

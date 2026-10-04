@@ -22,6 +22,10 @@ public sealed class Profile
     public AudioConfig? Audio { get; set; }
 
     public DateTimeOffset CreatedUtc { get; set; }
+
+    /// <summary>No saved display: activating it changes only the audio device. Derived, not stored.</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool IsAudioOnly => Display is null;
 }
 
 /// <summary>Modifiers + key, e.g. <c>{ Modifiers: ["Control","Alt"], Key: "F10" }</c>.</summary>

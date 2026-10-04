@@ -213,5 +213,7 @@ public class ProfileActivatorTests
         }
 
         public Task PlayConfirmationAsync(string? endpointId = null) => throw new InvalidOperationException("the activator never plays the tone");
+
+        public event Action? DefaultDeviceChanged { add { } remove { } }
     }
 }

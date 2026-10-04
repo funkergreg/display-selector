@@ -7,9 +7,9 @@ assignees: funkergreg
 ---
 
 > [!TIP]
-> In the app, **Diagnostics ▸ Submit bug report…** opens this form pre-filled with your
-> system profile and recent log, copies the full log to the clipboard, and opens the log
-> folder — paste the full log below or drag in `displayselector.log`.
+> In the app, **Help and diagnostics ▸ Submit bug report…** opens this form pre-filled with
+> your system diagnostics and recent log, copies your recent log to the clipboard, and opens
+> the log folder — paste the log below or drag in `displayselector.log`.
 
 ## Describe the bug
 
@@ -35,7 +35,7 @@ Paste your log between the fences (or drag `displayselector.log` into this box):
 
 ## Diagnostics
 
-<!-- If you used Diagnostics ▸ Submit bug report…, your system profile is filled in here. -->
+<!-- If you used Help and diagnostics ▸ Submit bug report…, your system diagnostics are filled in here. -->
 
 ## Additional context
 

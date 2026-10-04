@@ -15,6 +15,13 @@ internal static partial class NativeMethods
     /// <summary>WS_EX_TOOLWINDOW — keeps the hidden listener window out of Alt-Tab.</summary>
     public const int WS_EX_TOOLWINDOW = 0x0080;
 
+    /// <summary>Broadcast to top-level windows after the display layout or resolution changes.</summary>
+    public const int WM_DISPLAYCHANGE = 0x007E;
+
+    /// <summary>Broadcast to top-level windows when devices change; with DBT_DEVNODES_CHANGED, one was added or removed.</summary>
+    public const int WM_DEVICECHANGE = 0x0219;
+    public const int DBT_DEVNODES_CHANGED = 0x0007;
+
     // Global hotkey messaging.
     public const int WM_HOTKEY = 0x0312;
     public const uint MOD_ALT = 0x0001;

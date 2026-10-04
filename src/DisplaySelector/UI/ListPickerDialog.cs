@@ -1,15 +1,25 @@
+using DisplaySelector.App;
+using DisplaySelector.Core.Profiles;
+
 namespace DisplaySelector.UI;
 
-/// <summary>A small modal that picks one item from a list (reused for device + profile selection).</summary>
-internal sealed class ListPickerDialog<T> : Form
-    where T : class
+/// <summary>
+/// A small modal that picks one Profile from a list (the Profile pickers). Rows are owner-drawn like the
+/// Profile Manager's: the Profile's glyph, then its shared label.
+/// </summary>
+internal sealed class ListPickerDialog : Form
 {
-    private readonly ListBox _list = new() { Dock = DockStyle.Fill, IntegralHeight = false };
-    private readonly IReadOnlyList<T> _items;
-
-    private ListPickerDialog(string title, string prompt, IReadOnlyList<T> items, Func<T, string> display, T? initial)
+    private readonly ListBox _list = new()
     {
-        _items = items;
+        Dock = DockStyle.Fill,
+        IntegralHeight = false,
+        DrawMode = DrawMode.OwnerDrawFixed,
+    };
+    private readonly IReadOnlyList<Profile> _profiles;
+
+    private ListPickerDialog(string title, string prompt, IReadOnlyList<Profile> profiles)
+    {
+        _profiles = profiles;
 
         Text = title;
         Icon = AppIcon.Window;
@@ -19,20 +29,14 @@ internal sealed class ListPickerDialog<T> : Form
         MaximizeBox = false;
         ClientSize = new Size(380, 260);
 
-        foreach (var item in items)
+        // Items hold the label strings (the rows' accessible names); _profiles holds the matching Profiles.
+        _list.DrawItem += DrawRow;
+        foreach (var profile in profiles)
         {
-            _list.Items.Add(display(item));
+            _list.Items.Add(ProfileLabels.Label(profile));
         }
 
-        if (initial is not null)
-        {
-            var index = items.ToList().IndexOf(initial);
-            if (index >= 0)
-            {
-                _list.SelectedIndex = index;
-            }
-        }
-        else if (_list.Items.Count > 0)
+        if (_list.Items.Count > 0)
         {
             _list.SelectedIndex = 0;
         }
@@ -71,12 +75,30 @@ internal sealed class ListPickerDialog<T> : Form
         Controls.Add(buttons);
     }
 
-    private T? Selected =>
-        _list.SelectedIndex >= 0 && _list.SelectedIndex < _items.Count ? _items[_list.SelectedIndex] : null;
+    private Profile? Selected =>
+        _list.SelectedIndex >= 0 && _list.SelectedIndex < _profiles.Count ? _profiles[_list.SelectedIndex] : null;
 
-    public static T? Pick(string title, string prompt, IReadOnlyList<T> items, Func<T, string> display, T? initial = null)
+    public static Profile? Pick(string title, string prompt, IReadOnlyList<Profile> profiles)
     {
-        using var dialog = new ListPickerDialog<T>(title, prompt, items, display, initial);
+        using var dialog = new ListPickerDialog(title, prompt, profiles);
         return dialog.ShowDialog() == DialogResult.OK ? dialog.Selected : null;
+    }
+
+    protected override void OnLoad(EventArgs e)
+    {
+        base.OnLoad(e);
+        _list.ItemHeight = ProfileGlyphs.RowHeight(_list);
+    }
+
+    private void DrawRow(object? sender, DrawItemEventArgs e)
+    {
+        if (e.Index < 0 || e.Index >= _profiles.Count)
+        {
+            return;
+        }
+
+        e.DrawBackground();
+        ProfileGlyphs.DrawRow(_list, e, _profiles[e.Index], (string)_list.Items[e.Index], _list.LogicalToDeviceUnits(4));
+        e.DrawFocusRectangle();
     }
 }

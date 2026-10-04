@@ -179,5 +179,7 @@ public class AudioSwitchConfirmerTests
             Tones.Add(endpointId);
             return Task.CompletedTask;
         }
+
+        public event Action? DefaultDeviceChanged { add { } remove { } }
     }
 }

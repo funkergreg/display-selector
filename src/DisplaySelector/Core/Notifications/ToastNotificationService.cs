@@ -27,10 +27,17 @@ public sealed class ToastNotificationService : INotificationService
     }
 
     public void Show(string message, NotificationLevel level = NotificationLevel.Info) =>
-        TryToastOrFallback(
-            () => ShowToast(StatusTag, builder => builder.AddText(message)),
-            message,
-            level);
+        TryToastOrFallback(() => ShowToast(StatusTag, BuildXml(message)), message, level);
+
+    // Silent: the confirmation tone is the app's only sound. A chime would also play on the old device
+    // mid-switch, before the new audio device is the default.
+    internal static string BuildXml(string message) =>
+        new ToastContentBuilder()
+            .AddText(AppIdentity.AppName)
+            .AddText(message)
+            .AddAudio(new ToastAudio { Silent = true })
+            .GetToastContent()
+            .GetContent();
 
     private void TryToastOrFallback(Action showToast, string fallbackMessage, NotificationLevel level)
     {
@@ -51,15 +58,12 @@ public sealed class ToastNotificationService : INotificationService
         _fallback(fallbackMessage, level);
     }
 
-    // Builds an app-titled toast, applies the caller's content, and shows it under the given tag.
-    // Same Tag + Group => Windows replaces the existing toast rather than enqueuing a new one.
-    private static void ShowToast(string tag, Action<ToastContentBuilder> addContent)
+    // Shows the toast under the given tag. Same Tag + Group => Windows replaces the existing toast
+    // rather than enqueuing a new one.
+    private static void ShowToast(string tag, string content)
     {
-        var builder = new ToastContentBuilder().AddText(AppIdentity.AppName);
-        addContent(builder);
-
         var xml = new XmlDocument();
-        xml.LoadXml(builder.GetToastContent().GetContent());
+        xml.LoadXml(content);
 
         var toast = new ToastNotification(xml) { Tag = tag, Group = Group };
         ToastNotificationManagerCompat.CreateToastNotifier().Show(toast);

@@ -28,6 +28,7 @@ Both routes require a **Partner Center account** (~$19 one-time individual fee).
 | Identity / AUMID | `AppIdentity.AppUserModelId` + installer shortcut | Package manifest Application Id (keep it equal to `AppIdentity.AppUserModelId`) |
 | Toasts | Community Toolkit compat shim | AUMID from the manifest (compat shim optional) |
 | AppData + uninstall | installer `[UninstallDelete]` purge | automatic container cleanup |
+| Desktop Launchers / Profile Shortcuts | uninstaller deletes the `.lnk` paths in `shortcuts.txt` | **not** cleaned up: the `.lnk` files live outside the container, and MSIX runs no uninstall code. Offer "Delete Profile" cleanup only, or document it |
 | CCD display / RegisterHotKey / IPolicyConfig | work | work (full-trust package) |
 
 ### Seams already in place (light prep, M5)

@@ -14,14 +14,12 @@ public interface IDisplayService
     /// <summary>Decode the current displays for diagnostics (stable key, EDID, friendly, primary, resolution, orientation).</summary>
     IReadOnlyList<DisplayTarget> GetCurrentDisplays();
 
-    /// <summary>Stable ids of every connected display, active or not (empty if the query fails).</summary>
-    IReadOnlySet<string> GetConnectedTargetIds();
-
-    /// <summary>Validate (without applying) that the current configuration is settable — exercises the apply path safely.</summary>
-    bool ValidateCurrent();
-
-    /// <summary>Re-apply the current configuration (the "unstick a frozen Windows display UI" fix).</summary>
-    DisplayApplyResult ReapplyCurrent();
+    /// <summary>
+    /// Every connected display, active or not (port key, EDID key, friendly name; no layout details).
+    /// "Connected" is Windows' hot-plug view, not power: a TV that's off may or may not be listed.
+    /// Empty if the query fails.
+    /// </summary>
+    IReadOnlyList<DisplayTarget> GetConnectedDisplays();
 
     /// <summary>Apply a saved configuration, remapping onto live hardware (port-first / LUID fixup). Best-effort.</summary>
     DisplayApplyResult Apply(DisplayConfig config);

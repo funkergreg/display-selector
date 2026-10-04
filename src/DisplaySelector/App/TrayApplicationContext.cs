@@ -41,19 +41,28 @@ internal sealed class TrayApplicationContext : ApplicationContext, IProfileActio
     private readonly HiddenWindow _listener;
     private readonly NotifyIcon _tray;
     private readonly System.Windows.Forms.Timer _trimTimer;
+    private readonly LiveStateTracker _liveState;
+    private readonly System.Windows.Forms.Timer _liveTimer;
+    private readonly Action _onAudioChanged;
+
+    // Tags the "Active: …" header so a live-state change can update the menu in place.
+    private static readonly object ActiveHeaderTag = new();
 
     private readonly Dictionary<int, string> _hotkeyIdToProfileId = new();
 
     private AppConfig _config;
     private ProfilesDocument _document;
     private int _nextHotkeyId = 1;
-    private string? _activeProfileId;
 
     // Every window opened from the tray / manager is single-instance (re-invoking brings it forward).
     private readonly SingleInstanceWindow<AboutDialog> _aboutWindow = new();
     private readonly SingleInstanceWindow<ProfileManagerForm> _managerWindow = new();
     private readonly SingleInstanceWindow<AudioTestDialog> _audioTestWindow = new();
     private readonly SingleInstanceWindow<DisplayTestDialog> _displayTestWindow = new();
+    private readonly SingleInstanceWindow<ProfileDiagnosticsForm> _profileDiagnosticsWindow = new();
+
+    // The desktop items Profile Diagnostics lists for the Profile it shows (see BuildProfileReport).
+    private (string ProfileId, IReadOnlyList<string> Paths)? _diagnosticsShortcuts;
     private readonly IReadOnlyList<string> _startupArgs;
     private readonly LatestOperation _launch = new();
     private readonly LatestOperation _audioConfirm = new();
@@ -83,7 +92,16 @@ internal sealed class TrayApplicationContext : ApplicationContext, IProfileActio
         _activator = activator;
         _autoStart = autoStart;
         _launchCoordinator = launchCoordinator;
-        _launcherCreator = new LauncherCreator(shortcutWriter, shortcutRegistry, logger, ShowBalloon, ReportFailure);
+        _launcherCreator = new LauncherCreator(
+            shortcutWriter,
+            shortcutRegistry,
+            logger,
+            (message, icon) =>
+            {
+                ShowBalloon(message, icon);
+                OnShortcutsChanged(); // a Launcher or Profile Shortcut may have been created
+            },
+            ReportFailure);
         _shortcutCleanup = new ProfileShortcutCleanup(shortcutRegistry, shortcutWriter, logger);
         _audioConfirmer = new AudioSwitchConfirmer(audioService, logger);
         _startupArgs = startupArgs;
@@ -95,6 +113,7 @@ internal sealed class TrayApplicationContext : ApplicationContext, IProfileActio
         _config = _configStore.Load();
         _logger.Level = _config.DebugLogging ? LogLevel.Debug : LogLevel.Info;
         _document = _profileStore.Load();
+        _liveState = new LiveStateTracker(displayService, audioService, activator, () => _document.Profiles, logger);
 
         if (firstRun)
         {
@@ -134,8 +153,25 @@ internal sealed class TrayApplicationContext : ApplicationContext, IProfileActio
             MemoryTuning.TrimWorkingSet();
         };
 
+        // Live state: Windows reports display and audio changes (ours or anyone's); one switch fires a
+        // burst of them, so they re-arm a short countdown and the active Profile is recomputed once the
+        // burst ends. Nothing runs while idle (no polling).
+        _liveTimer = new System.Windows.Forms.Timer { Interval = 400 };
+        _liveTimer.Tick += (_, _) =>
+        {
+            _liveTimer.Stop();
+            RefreshLiveState();
+        };
+
         RegisterAllHotkeys();
         RebuildMenu();
+
+        // Audio notifications arrive on a Windows worker thread; hop to the UI thread (the menu's
+        // creation above installed the WinForms context).
+        var uiContext = SynchronizationContext.Current ?? new WindowsFormsSynchronizationContext();
+        _onAudioChanged = () => uiContext.Post(_ => ScheduleLiveRefresh(), null);
+        _listener.HardwareChanged += ScheduleLiveRefresh;
+        _audioService.DefaultDeviceChanged += _onAudioChanged;
 
         _log.Info($"Tray application started. {_document.Profiles.Count} profile(s) loaded.");
         TrimWorkingSetSoon();
@@ -165,33 +201,92 @@ internal sealed class TrayApplicationContext : ApplicationContext, IProfileActio
 
     private void RebuildMenu()
     {
-        _activeProfileId = FindActiveProfileId();
+        _diagnosticsShortcuts = null; // the Profiles changed (renamed, deleted, …): re-find their desktop items
+        _liveState.Refresh();
         var old = _tray.ContextMenuStrip;
-        _tray.ContextMenuStrip = BuildMenu(_activeProfileId);
+        _tray.ContextMenuStrip = BuildMenu();
         old?.Dispose();
 
         // Every change path ends here, so the Profile Manager window stays live whatever the source.
-        _managerWindow.Current?.RefreshProfiles();
+        ShowActiveProfile();
     }
 
-    // For background changes (the audio confirm finishing): rebuild only if the active profile actually
-    // changed, and never under an open menu, since rebuilding disposes it.
-    private void RefreshIfActiveChanged()
+    // (Re-)arms the live-state countdown; a burst of change events ends in one recompute.
+    private void ScheduleLiveRefresh()
     {
-        if (_tray.ContextMenuStrip is not { Visible: true } && FindActiveProfileId() != _activeProfileId)
+        _liveTimer.Stop();
+        _liveTimer.Start();
+    }
+
+    // Shows the active Profile everywhere: menu check marks + header (updated in place, so it's safe
+    // even while the menu is open), tray tooltip, and the Profile Manager.
+    private void ShowActiveProfile()
+    {
+        var activeId = _liveState.ActiveProfileId;
+        var activeName = ActiveProfile?.Name ?? LiveStateTracker.CustomName;
+        foreach (var item in _tray.ContextMenuStrip?.Items.OfType<ToolStripMenuItem>() ?? Enumerable.Empty<ToolStripMenuItem>())
         {
-            RebuildMenu();
+            if (item.Tag is string id)
+            {
+                item.Checked = id == activeId;
+            }
+            else if (item.Tag == ActiveHeaderTag)
+            {
+                item.Text = $"Active: {activeName}";
+            }
+        }
+
+        _tray.Text = Truncate($"Display-Selector — {activeName}", 63);
+        _managerWindow.Current?.RefreshProfiles();
+        RefreshDiagnosticWindows();
+    }
+
+    // The Display Tester, Profile Diagnostics and Audio Tester show live state; re-read it when they're open.
+    private void RefreshDiagnosticWindows()
+    {
+        _displayTestWindow.Current?.RefreshDisplays();
+        _profileDiagnosticsWindow.Current?.RefreshReport();
+
+        if (_audioTestWindow.Current is { } audioTester && _liveState.Snapshot != LiveSnapshot.Empty)
+        {
+            try
+            {
+                audioTester.RefreshDevices(_liveState.Snapshot.AudioDevices);
+            }
+            catch (Exception ex)
+            {
+                _log.Debug($"Audio Tester refresh failed ({ex.Message}); keeping its list.");
+            }
         }
     }
 
-    private ContextMenuStrip BuildMenu(string? activeId)
-    {
-        var menu = new ContextMenuStrip();
+    private Profile? ActiveProfile => _liveState.ActiveProfileId is { } id ? FindProfile(id) : null;
 
-        var activeName = activeId is null
-            ? "Custom (unsaved)"
-            : _document.Profiles.First(p => p.Id == activeId).Name;
-        menu.Items.Add(new ToolStripMenuItem($"Active: {activeName}") { Enabled = false });
+    // Re-reads the live state now and shows it: the active Profile everywhere if it changed, and the open
+    // live windows from the new snapshot either way (the layout may change without changing the Profile).
+    private void RefreshLiveState()
+    {
+        if (_liveState.Refresh())
+        {
+            ShowActiveProfile();
+        }
+        else
+        {
+            RefreshDiagnosticWindows();
+        }
+    }
+
+    private ContextMenuStrip BuildMenu()
+    {
+        // Both margins: a Profile shows its check mark and its glyph side by side.
+        var menu = new ContextMenuStrip { ShowCheckMargin = true };
+        var glyphSize = menu.ImageScalingSize.Height;
+
+        // Safety net for a change Windows didn't announce: re-check as the menu opens (no polling).
+        menu.Opening += (_, _) => RefreshLiveState();
+
+        // Text and check marks are filled in by ShowActiveProfile.
+        menu.Items.Add(new ToolStripMenuItem { Enabled = false, Tag = ActiveHeaderTag });
         menu.Items.Add(new ToolStripSeparator());
 
         if (_document.Profiles.Count == 0)
@@ -202,11 +297,12 @@ internal sealed class TrayApplicationContext : ApplicationContext, IProfileActio
         {
             foreach (var profile in _document.Profiles)
             {
+                var id = profile.Id;
                 var item = new ToolStripMenuItem(ProfileLabels.Label(profile))
                 {
-                    Checked = profile.Id == activeId,
+                    Tag = id,
+                    Image = ProfileGlyphs.For(profile, glyphSize),
                 };
-                var id = profile.Id;
                 item.Click += (_, _) => SwitchToProfile(id);
                 menu.Items.Add(item);
             }
@@ -221,13 +317,11 @@ internal sealed class TrayApplicationContext : ApplicationContext, IProfileActio
         saveAudio.Click += (_, _) => SaveCurrentAudioAsProfile();
         menu.Items.Add(saveAudio);
 
-        menu.Items.Add(BuildManageMenu());
+        menu.Items.Add(BuildManageMenu(glyphSize));
 
-        // Top-level (not just diagnostics): it's also the entry point for assigning an audio device
-        // to an existing profile.
-        var audioTest = new ToolStripMenuItem("Run audio test…");
-        audioTest.Click += (_, _) => RunAudioTest();
-        menu.Items.Add(audioTest);
+        var displaySettings = new ToolStripMenuItem("Windows Display Settings…");
+        displaySettings.Click += (_, _) => OpenDisplaySettings();
+        menu.Items.Add(displaySettings);
 
         menu.Items.Add(BuildDiagnosticsMenu());
 
@@ -252,7 +346,7 @@ internal sealed class TrayApplicationContext : ApplicationContext, IProfileActio
         return menu;
     }
 
-    private ToolStripMenuItem BuildManageMenu()
+    private ToolStripMenuItem BuildManageMenu(int glyphSize)
     {
         // Clicking the parent opens the window; hovering still opens the submenu (minimal tray workflow).
         var manage = new ToolStripMenuItem("Manage Profiles");
@@ -278,7 +372,7 @@ internal sealed class TrayApplicationContext : ApplicationContext, IProfileActio
         {
             var profile = _document.Profiles[index];
             var id = profile.Id;
-            var sub = new ToolStripMenuItem(profile.Name);
+            var sub = new ToolStripMenuItem(profile.Name) { Image = ProfileGlyphs.For(profile, glyphSize) };
 
             var rename = new ToolStripMenuItem("Rename…");
             rename.Click += (_, _) => RenameProfile(id);
@@ -312,6 +406,12 @@ internal sealed class TrayApplicationContext : ApplicationContext, IProfileActio
 
             sub.DropDownItems.Add(new ToolStripSeparator());
 
+            var diagnostics = new ToolStripMenuItem("Show diagnostics");
+            diagnostics.Click += (_, _) => ShowProfileDiagnostics(id);
+            sub.DropDownItems.Add(diagnostics);
+
+            sub.DropDownItems.Add(new ToolStripSeparator());
+
             var delete = new ToolStripMenuItem("Delete…");
             delete.Click += (_, _) => DeleteProfile(id);
             sub.DropDownItems.Add(delete);
@@ -332,6 +432,12 @@ internal sealed class TrayApplicationContext : ApplicationContext, IProfileActio
         var displayTest = new ToolStripMenuItem("Run display test…");
         displayTest.Click += (_, _) => RunDisplayTest();
         diagnostics.DropDownItems.Add(displayTest);
+
+        // Set audio device… has Refresh / Play tone, so this is mostly diagnostic now (it can still
+        // assign a device to a Profile).
+        var audioTest = new ToolStripMenuItem("Run audio test…");
+        audioTest.Click += (_, _) => RunAudioTest();
+        diagnostics.DropDownItems.Add(audioTest);
 
         var copyDiagnostics = new ToolStripMenuItem("Copy diagnostics");
         copyDiagnostics.Click += (_, _) => CopyDiagnostics();
@@ -412,9 +518,10 @@ internal sealed class TrayApplicationContext : ApplicationContext, IProfileActio
             ShowBalloon(
                 string.Join(Environment.NewLine, ResultLines(result).Prepend($"Switched to: {profile.Name}")),
                 result.Success ? ToolTipIcon.Info : ToolTipIcon.Warning);
-            _tray.Text = Truncate($"Display-Selector — {profile.Name}", 63);
         }
 
+        // The check mark may not land yet (a TV's audio device is still arriving); the Windows change
+        // events move it once the switch is actually in effect.
         RebuildMenu();
         TrimWorkingSetSoon();
         if (result.AudioToConfirm is { } audio)
@@ -455,7 +562,9 @@ internal sealed class TrayApplicationContext : ApplicationContext, IProfileActio
                     ShowBalloon($"Audio device '{audio.FriendlyName}' couldn't stay the default device.", ToolTipIcon.Warning);
                 }
 
-                RefreshIfActiveChanged(); // devices may have come and gone meanwhile
+                // Normally the audio change event already moved the check mark; this covers a session
+                // where Windows' audio notifications couldn't be registered.
+                ScheduleLiveRefresh();
             },
             "confirm the audio device");
 
@@ -591,6 +700,17 @@ internal sealed class TrayApplicationContext : ApplicationContext, IProfileActio
 
         var hotkeyNote = profile.Hotkey is null ? string.Empty : $" ({HotkeyCodec.Format(profile.Hotkey)})";
         _log.Info($"Saved {savedNoun} '{name}'{hotkeyNote}.");
+
+        // The auto-assigned key may be owned by another app (e.g. Steam's F12): say so, don't imply it works.
+        if (IsHotkeyInactive(profile))
+        {
+            ShowBalloon(
+                $"Saved {savedNoun} '{name}'. Its hotkey {HotkeyCodec.Format(profile.Hotkey)} is used by another app, " +
+                "so it won't work; choose Set hotkey… to pick another.",
+                ToolTipIcon.Warning);
+            return;
+        }
+
         ShowBalloon($"Saved {savedNoun} '{name}'{hotkeyNote}.", ToolTipIcon.Info);
     }
 
@@ -633,20 +753,8 @@ internal sealed class TrayApplicationContext : ApplicationContext, IProfileActio
             return;
         }
 
-        var devices = _audioService.GetOutputDevices();
-        if (devices.Count == 0)
-        {
-            ShowBalloon("No audio output devices found.", ToolTipIcon.Warning);
-            return;
-        }
-
-        var current = devices.FirstOrDefault(d => d.Id == profile.Audio?.EndpointId);
-        var chosen = ListPickerDialog<AudioEndpoint>.Pick(
-            "Set audio device",
-            $"Output device for '{profile.Name}':",
-            devices,
-            d => d.DisplayLabel,
-            current);
+        var chosen = AudioDeviceSetterDialog.Pick(
+            _audioService, _log, $"Output device for '{profile.Name}':", profile.Audio?.EndpointId);
         if (chosen is null)
         {
             return;
@@ -655,28 +763,61 @@ internal sealed class TrayApplicationContext : ApplicationContext, IProfileActio
         SetProfileAudio(profile, chosen);
     }
 
-    // Saves the profile's new audio device (Set audio device…, or Assign to Profile… from the Audio
-    // test). If the profile is the active one, the device is switched to straight away (with the
-    // confirmation tone), so editing the active profile keeps it active instead of leaving the live
-    // default behind. Choosing the device that's already the default changes nothing, so no tone.
-    private void SetProfileAudio(Profile profile, AudioEndpoint device)
+    private void SetProfileAudio(Profile profile, AudioEndpoint device) =>
+        SetProfilesAudio(new[] { profile }, device, $"'{profile.Name}'");
+
+    // Saves the profiles' new audio device (Set audio device…, or Assign to Profile… / Assign to all
+    // Profiles… from the Audio Tester). If the active profile is among them, the device is switched to
+    // straight away (with the confirmation tone), so editing the active profile keeps it active instead
+    // of leaving the live default behind. Choosing the device that's already the default changes nothing,
+    // so no tone.
+    private void SetProfilesAudio(IReadOnlyList<Profile> profiles, AudioEndpoint device, string which)
     {
-        var switching = FindActiveProfileId() == profile.Id && _audioService.GetDefaultOutputDevice()?.Id != device.Id;
-        profile.Audio = new AudioConfig { EndpointId = device.Id, FriendlyName = device.FriendlyName };
+        _liveState.Refresh();
+        var switching = profiles.Any(p => p.Id == _liveState.ActiveProfileId) &&
+                        _liveState.Snapshot.DefaultAudioId != device.Id;
+        foreach (var profile in profiles)
+        {
+            profile.Audio = new AudioConfig { EndpointId = device.Id, FriendlyName = device.FriendlyName };
+        }
         if (switching)
         {
             _audioService.SetDefaultOutputDevice(device.Id);
         }
 
-        _log.Info($"Set audio device for '{profile.Name}' to '{device.FriendlyName}'{(switching ? " and switched to it" : string.Empty)}.");
+        var message = $"Set audio for {which} to '{device.FriendlyName}'{(switching ? " and switched to it" : string.Empty)}.";
+        _log.Info(message);
         PersistAndRefresh();
-        ShowBalloon(
-            $"Set audio for '{profile.Name}' to '{device.FriendlyName}'{(switching ? " and switched to it" : string.Empty)}.",
-            ToolTipIcon.Info);
+        ShowBalloon(message, ToolTipIcon.Info);
         if (switching)
         {
-            ConfirmAudio(profile.Audio);
+            ConfirmAudio(profiles[0].Audio!);
         }
+    }
+
+    // Audio Tester ▸ Assign to all Profiles…: every full Profile; audio-only Profiles keep their device
+    // (each of those IS a device choice).
+    private void AssignDeviceToAllProfiles(AudioEndpoint endpoint)
+    {
+        var profiles = _document.Profiles.Where(p => !p.IsAudioOnly).ToList();
+        if (profiles.Count == 0)
+        {
+            ShowBalloon("No Profiles with displays yet — save one first.", ToolTipIcon.Info);
+            return;
+        }
+
+        var skipped = _document.Profiles.Count - profiles.Count;
+        var note = skipped > 0 ? $"{Environment.NewLine}{Environment.NewLine}Audio-only Profiles keep their own device." : string.Empty;
+        if (MessageBox.Show(
+                $"Set '{endpoint.FriendlyName}' as the audio device for all {profiles.Count} Profile{(profiles.Count == 1 ? string.Empty : "s")}?{note}",
+                "Assign to all Profiles",
+                MessageBoxButtons.OKCancel,
+                MessageBoxIcon.Question) != DialogResult.OK)
+        {
+            return;
+        }
+
+        SetProfilesAudio(profiles, endpoint, profiles.Count == 1 ? $"'{profiles[0].Name}'" : $"all {profiles.Count} Profiles");
     }
 
     private void AssignDeviceToProfile(AudioEndpoint endpoint)
@@ -769,6 +910,7 @@ internal sealed class TrayApplicationContext : ApplicationContext, IProfileActio
         PersistAndRefresh(reregisterHotkeys: true);
 
         var removed = answer == DialogResult.Yes ? _shortcutCleanup.Delete(linked) : 0;
+        OnShortcutsChanged();
         ShowBalloon(
             removed > 0
                 ? $"Deleted Profile '{profile.Name}' and {removed} desktop item{(removed == 1 ? string.Empty : "s")}."
@@ -857,7 +999,7 @@ internal sealed class TrayApplicationContext : ApplicationContext, IProfileActio
         }
 
         // The just-assigned hotkey may have failed to register (owned by another app).
-        if (profile.Hotkey is not null && !_hotkeyIdToProfileId.ContainsValue(profile.Id))
+        if (IsHotkeyInactive(profile))
         {
             MessageBox.Show(
                 $"'{HotkeyCodec.Format(profile.Hotkey)}' could not be registered — another application is already using it. " +
@@ -919,7 +1061,7 @@ internal sealed class TrayApplicationContext : ApplicationContext, IProfileActio
 
         if (outcome.Profile is null)
         {
-            var missing = $"This Launcher's Profile '{command.ProfileRef}' no longer exists";
+            var missing = $"This {LaunchCommand.NounFor(command.Target)}'s Profile '{command.ProfileRef}' no longer exists";
             var message = !outcome.LaunchAttempted
                 ? $"{missing}."
                 : outcome.Launched
@@ -1012,7 +1154,7 @@ internal sealed class TrayApplicationContext : ApplicationContext, IProfileActio
     // IProfileActions: thin pass-throughs, so the window and the tray menu run identical operations.
     IReadOnlyList<Profile> IProfileActions.Profiles => _document.Profiles;
 
-    string? IProfileActions.ActiveProfileId => _activeProfileId;
+    string? IProfileActions.ActiveProfileId => _liveState.ActiveProfileId;
 
     void IProfileActions.Activate(string id) => SwitchToProfile(id);
 
@@ -1036,6 +1178,74 @@ internal sealed class TrayApplicationContext : ApplicationContext, IProfileActio
 
     void IProfileActions.CreateLauncherAndAssign() =>
         _launcherCreator.CreateAndAssign(_document.Profiles, LauncherDialogOwner);
+
+    void IProfileActions.OpenDisplaySettings() => OpenDisplaySettings();
+
+    void IProfileActions.ShowDiagnostics(string id) => ShowProfileDiagnostics(id);
+
+    private void ShowProfileDiagnostics(string id)
+    {
+        _log.Info("Opening Profile Diagnostics window.");
+        _diagnosticsShortcuts = null; // an explicit request re-finds the desktop items too
+
+        // An explicit request re-reads the live state first (in case Windows didn't announce a change), so
+        // the window opens on (or an open one shows) fresh state.
+        RefreshLiveState();
+        _profileDiagnosticsWindow.ShowOrActivate(
+            () => new ProfileDiagnosticsForm(id, BuildProfileReport, report => CopyToClipboard(report, "Profile diagnostics")),
+            modal: false,
+            TrimWorkingSetSoon);
+        _profileDiagnosticsWindow.Current?.ShowProfile(id); // an open window may show another Profile
+    }
+
+    void IProfileActions.SelectionChanged(string? id)
+    {
+        if (id is not null)
+        {
+            _profileDiagnosticsWindow.Current?.ShowProfile(id);
+        }
+    }
+
+    // Desktop items were created or deleted: an open Profile Diagnostics re-finds them.
+    private void OnShortcutsChanged()
+    {
+        _diagnosticsShortcuts = null;
+        _profileDiagnosticsWindow.Current?.RefreshReport();
+    }
+
+    // Profile Diagnostics text: what the profile saved next to the live state (the tracker's snapshot, so it
+    // agrees with the check mark and the Display Tester); null if it's gone.
+    private string? BuildProfileReport(string id)
+    {
+        if (FindProfile(id) is not { } profile)
+        {
+            return null;
+        }
+
+        try
+        {
+            // Finding the desktop items reads every tracked .lnk, and a hardware change can't change them:
+            // keep them for the shown Profile until the user changes something (or picks another Profile).
+            if (_diagnosticsShortcuts is not { } shortcuts || shortcuts.ProfileId != id)
+            {
+                _diagnosticsShortcuts = shortcuts = (id, _shortcutCleanup.Find(profile, _document.Profiles));
+            }
+
+            var live = _liveState.Snapshot;
+            return ProfileReport.Build(
+                profile,
+                isActive: _liveState.ActiveProfileId == id,
+                live.ActiveDisplays,
+                live.ConnectedDisplays,
+                live.AudioDevices,
+                shortcuts.Paths);
+        }
+        catch (Exception ex)
+        {
+            _log.Error($"Couldn't build diagnostics for Profile '{profile.Name}'.", ex);
+            return $"Couldn't read the current state for '{profile.Name}' — see the log.";
+        }
+    }
 
     // ---- Hotkeys -------------------------------------------------------------------------------
 
@@ -1063,6 +1273,10 @@ internal sealed class TrayApplicationContext : ApplicationContext, IProfileActio
             }
         }
     }
+
+    // Saved but not registered: RegisterAllHotkeys couldn't claim it (another app owns the combination).
+    private bool IsHotkeyInactive(Profile profile) =>
+        profile.Hotkey is not null && !_hotkeyIdToProfileId.ContainsValue(profile.Id);
 
     private void OnHotkeyPressed(int hotkeyId)
     {
@@ -1092,15 +1306,6 @@ internal sealed class TrayApplicationContext : ApplicationContext, IProfileActio
         return null;
     }
 
-    // ---- Active-profile detection --------------------------------------------------------------
-
-    private string? FindActiveProfileId()
-    {
-        var currentAudioId = _audioService.GetDefaultOutputDevice()?.Id;
-        var currentDisplays = _displayService.GetCurrentDisplays();
-        return ProfileMatching.FindActive(_document.Profiles, currentDisplays, currentAudioId, _activator.IsLive)?.Id;
-    }
-
     // ---- Diagnostics / misc --------------------------------------------------------------------
 
     private void ToggleDebugLogging(bool enabled)
@@ -1116,28 +1321,49 @@ internal sealed class TrayApplicationContext : ApplicationContext, IProfileActio
     {
         _log.Info("Opening audio test dialog.");
         _audioTestWindow.ShowOrActivate(
-            () => new AudioTestDialog(_audioService, _log, AssignDeviceToProfile), modal: false, TrimWorkingSetSoon);
+            () => new AudioTestDialog(_audioService, _log, AssignDeviceToProfile, AssignDeviceToAllProfiles),
+            modal: false,
+            TrimWorkingSetSoon);
     }
 
     private void RunDisplayTest()
     {
         _log.Info("Opening display test dialog.");
+
+        // An explicit request re-reads the live state first, so the window opens on (or an open one
+        // shows) fresh state.
+        RefreshLiveState();
         _displayTestWindow.ShowOrActivate(
-            () => new DisplayTestDialog(_displayService, _log), modal: false, TrimWorkingSetSoon);
+            () => new DisplayTestDialog(() => _liveState.Snapshot, () => ActiveProfile, RefreshLiveState),
+            modal: false,
+            TrimWorkingSetSoon);
     }
 
     private void CopyDiagnostics()
     {
         try
         {
-            var report = DiagnosticsReport.Build(_displayService, _audioService);
-            Clipboard.SetText(report);
-            _log.Info("Copied diagnostics to clipboard.");
-            ShowBalloon("Diagnostics copied to clipboard.", ToolTipIcon.Info);
+            // Re-read first, so the report's "Active Profile" agrees with the displays and audio it lists.
+            RefreshLiveState();
+            CopyToClipboard(DiagnosticsReport.Build(_displayService, _audioService, ActiveProfile?.Name), "Diagnostics");
         }
         catch (Exception ex)
         {
             ReportFailure("copy diagnostics", ex);
+        }
+    }
+
+    private void CopyToClipboard(string text, string what)
+    {
+        try
+        {
+            Clipboard.SetText(text);
+            _log.Info($"Copied {what.ToLowerInvariant()} to clipboard.");
+            ShowBalloon($"{what} copied to clipboard.", ToolTipIcon.Info);
+        }
+        catch (Exception ex)
+        {
+            ReportFailure($"copy {what.ToLowerInvariant()}", ex);
         }
     }
 
@@ -1166,7 +1392,8 @@ internal sealed class TrayApplicationContext : ApplicationContext, IProfileActio
     {
         try
         {
-            var diagnostics = IssueReporter.ScrubUser(DiagnosticsReport.Build(_displayService, _audioService));
+            RefreshLiveState(); // as in Copy diagnostics: "Active Profile" matches the listed hardware
+            var diagnostics = IssueReporter.ScrubUser(DiagnosticsReport.Build(_displayService, _audioService, ActiveProfile?.Name));
 
             // Full (redacted) log goes to the clipboard; a short tail is inlined in the issue body
             // so there's runtime context even if the reporter never pastes the clipboard.
@@ -1216,6 +1443,20 @@ internal sealed class TrayApplicationContext : ApplicationContext, IProfileActio
         var version = Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "?";
         _log.Info($"Showed About (version {version}).");
         _aboutWindow.ShowOrActivate(() => new AboutDialog(version, OpenAboutLink), modal: true, TrimWorkingSetSoon);
+    }
+
+    // The same page as the desktop's right-click "Display settings".
+    private void OpenDisplaySettings()
+    {
+        try
+        {
+            OpenExternal("ms-settings:display");
+            _log.Info("Opened Windows Display Settings.");
+        }
+        catch (Exception ex)
+        {
+            ReportFailure("open Windows Display Settings", ex);
+        }
     }
 
     private void OpenAboutLink(string url)
@@ -1298,12 +1539,16 @@ internal sealed class TrayApplicationContext : ApplicationContext, IProfileActio
         if (disposing)
         {
             Application.Idle -= RunStartupCommandOnce;
+            _audioService.DefaultDeviceChanged -= _onAudioChanged;
+            _listener.HardwareChanged -= ScheduleLiveRefresh;
+            _liveTimer.Dispose();
             _launch.Cancel();
             _audioConfirm.Cancel();
             _managerWindow.Close();
             _aboutWindow.Close();
             _audioTestWindow.Close();
             _displayTestWindow.Close();
+            _profileDiagnosticsWindow.Close();
             _trimTimer.Dispose();
             _tray.Dispose();
             _listener.Dispose();

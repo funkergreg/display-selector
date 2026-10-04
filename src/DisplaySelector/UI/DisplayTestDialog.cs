@@ -1,126 +1,195 @@
-using System.Text;
+using DisplaySelector.Core.Activation;
 using DisplaySelector.Core.Display;
-using DisplaySelector.Core.Logging;
+using DisplaySelector.Core.Profiles;
 
 namespace DisplaySelector.UI;
 
 /// <summary>
-/// Human-in-the-loop (tier-3) display verification: shows the displays the tool currently sees
-/// (so the human can confirm identification is correct), validates the apply path non-destructively,
-/// and can re-apply the current configuration (the "unstick a frozen display UI" action).
+/// Human-in-the-loop (tier-3) display check: every display Windows reports as connected, one row each,
+/// with its port, layout, whether it's showing desktop, and whether the active Profile uses it, so the
+/// human can confirm identification is right. Refreshes itself when displays change or devices are
+/// plugged in or out (<see cref="RefreshDisplays"/>, called by the controller); Refresh stays as a manual
+/// fallback. Hover a row for its EDID id (the fallback matching key).
 /// </summary>
 internal sealed class DisplayTestDialog : Form
 {
-    private readonly IDisplayService _display;
-    private readonly ILog _log;
-    private readonly TextBox _output = new()
+    private static readonly string[] Columns = { "Display", "Port", "Resolution", "Orientation", "Primary", "Status", "In active Profile" };
+
+    private readonly Func<LiveSnapshot> _live;
+    private readonly Func<Profile?> _activeProfile;
+    private readonly ListView _table = new()
     {
         Dock = DockStyle.Fill,
-        Multiline = true,
-        ReadOnly = true,
-        ScrollBars = ScrollBars.Vertical,
-        Font = new Font(FontFamily.GenericMonospace, 9f),
+        View = View.Details,
+        FullRowSelect = true,
+        MultiSelect = false,
+        HeaderStyle = ColumnHeaderStyle.Nonclickable,
+        ShowItemToolTips = true,
     };
-
-    private readonly Button _refreshButton = new() { Text = "Refresh", Width = 90 };
-    private readonly Button _validateButton = new() { Text = "Validate", Width = 90 };
-    private readonly Button _reapplyButton = new() { Text = "Re-apply current", Width = 130 };
-
-    public DisplayTestDialog(IDisplayService display, ILog log)
+    private readonly Label _activeLabel = new() { Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(0, 0, 0, 6) };
+    private readonly Label _note = new()
     {
-        _display = display;
-        _log = log;
+        Dock = DockStyle.Bottom,
+        AutoSize = true,
+        ForeColor = SystemColors.GrayText,
+        Padding = new Padding(0, 6, 0, 0),
+        Text = "Windows can tell whether a display is connected, not whether it's switched on: a TV that's off " +
+               "may disappear from this list or stay listed as connected. Hover a row for its EDID id.",
+    };
+    private readonly Button _refreshButton = new() { Text = "Refresh", AutoSize = true };
+    private readonly FlowLayoutPanel _buttons = new()
+    {
+        Dock = DockStyle.Bottom,
+        AutoSize = true,
+        FlowDirection = FlowDirection.LeftToRight,
+        Padding = new Padding(8),
+    };
+    private readonly Panel _body = new() { Dock = DockStyle.Fill, Padding = new Padding(8, 8, 8, 0) };
+    private string _shown = string.Empty;
+    private bool _fitted;
 
-        Text = "Display test";
+    /// <param name="live">The hardware as of the last live-state refresh (shared with the check mark).</param>
+    /// <param name="activeProfile">The active Profile as of the last live-state refresh.</param>
+    /// <param name="refreshLiveState">
+    /// Re-reads the live state now (the manual Refresh); the controller then refreshes this window.
+    /// </param>
+    public DisplayTestDialog(Func<LiveSnapshot> live, Func<Profile?> activeProfile, Action refreshLiveState)
+    {
+        _live = live;
+        _activeProfile = activeProfile;
+
+        Text = "Display Tester";
         Icon = AppIcon.Window;
         FormBorderStyle = FormBorderStyle.Sizable;
         StartPosition = FormStartPosition.CenterScreen;
         MinimizeBox = false;
         MaximizeBox = false;
-        ClientSize = new Size(560, 360);
+        ClientSize = new Size(640, 260);
 
-        var buttons = new FlowLayoutPanel
+        foreach (var column in Columns)
         {
-            Dock = DockStyle.Bottom,
-            FlowDirection = FlowDirection.LeftToRight,
-            Height = 44,
-            Padding = new Padding(8),
-        };
-        // The window's [x] closes the dialog, so there's no redundant Close button.
-        buttons.Controls.AddRange(_refreshButton, _validateButton, _reapplyButton);
-
-        var outputPanel = new Panel { Dock = DockStyle.Fill, Padding = new Padding(8) };
-        outputPanel.Controls.Add(_output);
-
-        Controls.Add(outputPanel);
-        Controls.Add(buttons);
-
-        _refreshButton.Click += (_, _) => Refresh_();
-        _validateButton.Click += (_, _) => ValidateConfig();
-        _reapplyButton.Click += (_, _) => Reapply();
-
-        Refresh_();
-    }
-
-    private void Refresh_()
-    {
-        var sb = new StringBuilder();
-        sb.AppendLine("Displays the tool currently sees:");
-        sb.AppendLine();
-
-        var displays = _display.GetCurrentDisplays();
-        if (displays.Count == 0)
-        {
-            sb.AppendLine("  (none — QueryDisplayConfig returned nothing)");
+            _table.Columns.Add(column);
         }
 
-        var n = 1;
-        foreach (var d in displays)
-        {
-            sb.AppendLine($"  [{n++}] {d.Friendly}{(d.Primary ? "  (PRIMARY)" : string.Empty)}");
-            sb.AppendLine($"        port key : {d.StableId}");
-            sb.AppendLine($"        edid     : {d.Edid ?? "-"}");
-            sb.AppendLine($"        resolution: {d.Resolution ?? "-"}   orientation: {d.Orientation ?? "-"}");
-            sb.AppendLine();
-        }
+        // The window's [x] closes it, so there's no redundant Close button.
+        _buttons.Controls.Add(_refreshButton);
+        _body.Controls.Add(_table);
+        _body.Controls.Add(_activeLabel);
+        _body.Controls.Add(_note);
 
-        _output.Text = sb.ToString();
+        Controls.Add(_body);
+        Controls.Add(_buttons);
+
+        _refreshButton.Click += (_, _) => refreshLiveState();
     }
 
-    private void ValidateConfig()
+    protected override void OnLoad(EventArgs e)
     {
-        var ok = _display.ValidateCurrent();
-        _log.Info($"Display test: ValidateCurrent => {ok}.");
-        MessageBox.Show(
-            this,
-            ok ? "Current configuration validated successfully (settable)." : "Validation FAILED — see the log.",
-            "Validate",
-            MessageBoxButtons.OK,
-            ok ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
+        base.OnLoad(e);
+        ActiveControl = _refreshButton; // nothing pre-selected
+        RefreshDisplays();
+        CenterToScreen();
     }
 
-    private void Reapply()
+    /// <summary>
+    /// Shows the latest live snapshot; the window grows (never shrinks) if the new rows don't fit. Unchanged
+    /// contents are left alone (a live refresh fires for any device plugged in), and a changed table
+    /// keeps the selected display selected.
+    /// </summary>
+    public void RefreshDisplays()
     {
-        var confirm = MessageBox.Show(
-            this,
-            "Re-apply the current display configuration now? Displays may briefly blank. " +
-            "This is the same action that unsticks a frozen Windows display UI.",
-            "Re-apply current",
-            MessageBoxButtons.OKCancel,
-            MessageBoxIcon.Warning);
-        if (confirm != DialogResult.OK)
+        if (IsDisposed)
         {
             return;
         }
 
-        var result = _display.ReapplyCurrent();
-        _log.Info($"Display test: ReapplyCurrent => success={result.Success} error={result.Error ?? "-"}.");
-        MessageBox.Show(
-            this,
-            result.Success ? "Re-applied current configuration." : $"Re-apply failed: {result.Error}",
-            "Re-apply current",
-            MessageBoxButtons.OK,
-            result.Success ? MessageBoxIcon.Information : MessageBoxIcon.Error);
-        Refresh_();
+        var profile = _activeProfile();
+        var label = $"Active Profile: {profile?.Name ?? LiveStateTracker.CustomName}";
+        var live = _live();
+        var rows = DisplayInventory.Rows(live.ActiveDisplays, live.ConnectedDisplays)
+            .Select(row => (row.Target, Cells: new[]
+            {
+                row.Target.Friendly,
+                row.Target.StableId,
+                row.Target.Resolution ?? string.Empty,
+                row.Target.Orientation ?? string.Empty,
+                row.Target.Primary ? "Yes" : string.Empty,
+                DisplayInventory.Describe(row.State),
+                profile is null ? "–"
+                    : profile.Display?.Targets.Any(t => t.StableId == row.Target.StableId) == true ? "Yes" : "No",
+            }))
+            .ToList();
+
+        var shown = label + "\n" + string.Join("\n", rows.Select(r => string.Join("|", r.Cells) + "|" + r.Target.Edid));
+        if (shown == _shown)
+        {
+            return;
+        }
+
+        _shown = shown;
+        _activeLabel.Text = label;
+        var selected = _table.SelectedItems.Count > 0 ? _table.SelectedItems[0].Name : null;
+
+        _table.BeginUpdate();
+        _table.Items.Clear();
+        foreach (var (target, cells) in rows)
+        {
+            _table.Items.Add(new ListViewItem(cells)
+            {
+                Name = target.StableId,
+                ToolTipText = $"EDID id: {target.Edid ?? "(none)"}",
+                Selected = target.StableId == selected,
+            });
+        }
+
+        if (rows.Count == 0)
+        {
+            _table.Items.Add(new ListViewItem("(no displays reported)") { ForeColor = SystemColors.GrayText });
+        }
+
+        SizeColumns();
+        _table.EndUpdate();
+        FitToContent();
+    }
+
+    // Each column as wide as its header or its widest cell.
+    private void SizeColumns()
+    {
+        var padding = LogicalToDeviceUnits(16);
+        for (var i = 0; i < _table.Columns.Count; i++)
+        {
+            var widest = TextRenderer.MeasureText(_table.Columns[i].Text, _table.Font).Width;
+            foreach (ListViewItem item in _table.Items)
+            {
+                if (i < item.SubItems.Count)
+                {
+                    widest = Math.Max(widest, TextRenderer.MeasureText(item.SubItems[i].Text, _table.Font).Width);
+                }
+            }
+
+            _table.Columns[i].Width = widest + padding;
+        }
+    }
+
+    private void FitToContent()
+    {
+        if (!IsHandleCreated || _table.Items.Count == 0)
+        {
+            return;
+        }
+
+        var rowHeight = _table.GetItemRect(0).Height;
+        var headerHeight = _table.GetItemRect(0).Top; // the first row starts below the header
+        var tableWidth = _table.Columns.Cast<ColumnHeader>().Sum(c => c.Width) + LogicalToDeviceUnits(8);
+        var tableHeight = headerHeight + (rowHeight * _table.Items.Count) + LogicalToDeviceUnits(8);
+
+        // The note wraps to the table's width rather than widening the window.
+        var width = Math.Max(tableWidth, LogicalToDeviceUnits(480));
+        _note.MaximumSize = new Size(width, 0);
+        var height = _body.Padding.Vertical + _activeLabel.GetPreferredSize(Size.Empty).Height + tableHeight +
+                     _note.GetPreferredSize(new Size(width, 0)).Height + _buttons.GetPreferredSize(Size.Empty).Height;
+
+        WindowFit.Fit(this, new Size(width + _body.Padding.Horizontal, height), growOnly: _fitted);
+        _fitted = true;
     }
 }

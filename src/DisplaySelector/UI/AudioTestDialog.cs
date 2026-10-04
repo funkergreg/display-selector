@@ -6,28 +6,39 @@ namespace DisplaySelector.UI;
 /// <summary>
 /// Human-in-the-loop (tier-3) audio verification: list endpoints, play the confirmation tone to a
 /// chosen device and confirm it was heard, and optionally make a device the system default (all roles)
-/// to verify the core switch — including that System Sounds follows.
+/// to verify the core switch — including that System Sounds follows. Can also assign the device to one
+/// Profile, or to every full (non-audio-only) Profile.
 /// </summary>
 internal sealed class AudioTestDialog : Form
 {
     private readonly IAudioService _audio;
     private readonly ILog _log;
-    private readonly Action<AudioEndpoint>? _onAssignToProfile;
-    private readonly ListBox _list = new() { Dock = DockStyle.Fill, IntegralHeight = false };
-    private readonly Button _playButton = new() { Text = "Play tone", Width = 100 };
-    private readonly Button _setDefaultButton = new() { Text = "Set as default", Width = 110 };
-    private readonly Button _assignButton = new() { Text = "Assign to Profile…", Width = 130 };
-    private readonly Button _refreshButton = new() { Text = "Refresh", Width = 80 };
+    private readonly AudioDeviceList _list;
+    private readonly Button _playButton = new() { Text = "Play tone", AutoSize = true };
+    private readonly Button _setDefaultButton = new() { Text = "Set as Windows default", AutoSize = true };
+    private readonly Button _assignButton = new() { Text = "Assign to Profile…", AutoSize = true };
+    private readonly Button _assignAllButton = new() { Text = "Assign to all Profiles…", AutoSize = true };
+    private readonly Button _refreshButton = new() { Text = "Refresh", AutoSize = true };
+    private readonly FlowLayoutPanel _buttons = new()
+    {
+        Dock = DockStyle.Bottom,
+        AutoSize = true,
+        WrapContents = false,
+        FlowDirection = FlowDirection.LeftToRight,
+        Padding = new Padding(8),
+    };
 
-    private List<AudioEndpoint> _endpoints = new();
-
-    public AudioTestDialog(IAudioService audio, ILog log, Action<AudioEndpoint>? onAssignToProfile = null)
+    public AudioTestDialog(
+        IAudioService audio,
+        ILog log,
+        Action<AudioEndpoint> onAssignToProfile,
+        Action<AudioEndpoint> onAssignToAllProfiles)
     {
         _audio = audio;
         _log = log;
-        _onAssignToProfile = onAssignToProfile;
+        _list = new AudioDeviceList(audio);
 
-        Text = "Audio test";
+        Text = "Audio Tester";
         Icon = AppIcon.Window;
         FormBorderStyle = FormBorderStyle.FixedDialog;
         StartPosition = FormStartPosition.CenterScreen;
@@ -35,87 +46,76 @@ internal sealed class AudioTestDialog : Form
         MaximizeBox = false;
         ClientSize = new Size(520, 300);
 
-        var buttons = new FlowLayoutPanel
-        {
-            Dock = DockStyle.Bottom,
-            FlowDirection = FlowDirection.LeftToRight,
-            Height = 44,
-            Padding = new Padding(8),
-        };
-        // Refresh first (leftmost) to match the Display test dialog. The window's [x] closes it, so
+        // Refresh first (leftmost) to match the Display Tester. The window's [x] closes it, so
         // there's no redundant Close button.
-        buttons.Controls.Add(_refreshButton);
-        buttons.Controls.Add(_playButton);
-        buttons.Controls.Add(_setDefaultButton);
-        if (_onAssignToProfile is not null)
-        {
-            buttons.Controls.Add(_assignButton);
-        }
+        _buttons.Controls.Add(_refreshButton);
+        _buttons.Controls.Add(_playButton);
+        _buttons.Controls.Add(_setDefaultButton);
+        _buttons.Controls.Add(_assignButton);
+        _buttons.Controls.Add(_assignAllButton);
 
         var listPanel = new Panel { Dock = DockStyle.Fill, Padding = new Padding(8) };
         listPanel.Controls.Add(_list);
 
         Controls.Add(listPanel);
-        Controls.Add(buttons);
+        Controls.Add(_buttons);
 
-        _playButton.Click += (_, _) => PlaySelected();
+        _playButton.Click += (_, _) => _list.PlaySelected(_playButton, _log, "Audio Tester");
         _setDefaultButton.Click += (_, _) => SetSelectedAsDefault();
-        _assignButton.Click += (_, _) => AssignSelectedToProfile();
+        _assignButton.Click += (_, _) => RunOnSelected(onAssignToProfile);
+        _assignAllButton.Click += (_, _) => RunOnSelected(onAssignToAllProfiles);
         _refreshButton.Click += (_, _) => LoadDevices();
 
         LoadDevices();
     }
 
+    // Selects the Windows default.
     private void LoadDevices()
     {
-        _endpoints = _audio.GetOutputDevices().ToList();
-        _list.Items.Clear();
-        foreach (var e in _endpoints)
-        {
-            _list.Items.Add(e.DisplayLabel);
-        }
+        _list.Reload();
+        UpdateButtons();
+    }
 
-        if (_list.Items.Count > 0)
+    /// <summary>
+    /// Shows a live refresh's device list (the default moved, or a device came or went), so the
+    /// "(default)" marker stays current. Keeps the selected device; unchanged devices leave it alone.
+    /// </summary>
+    public void RefreshDevices(IReadOnlyList<AudioEndpoint> devices)
+    {
+        if (!IsDisposed && _list.ShowIfChanged(devices))
         {
-            _list.SelectedIndex = Math.Max(0, _endpoints.FindIndex(e => e.IsDefault));
+            UpdateButtons();
         }
+    }
 
-        var any = _endpoints.Count > 0;
-        _playButton.Enabled = any;
+    private void UpdateButtons()
+    {
+        var any = _list.Items.Count > 0;
+        _playButton.Enabled = any && !_list.IsPlaying;
         _setDefaultButton.Enabled = any;
         _assignButton.Enabled = any;
+        _assignAllButton.Enabled = any;
     }
 
-    private void AssignSelectedToProfile()
+    // The buttons may not fit the default width (longer labels at higher scaling): widen to fit them.
+    protected override void OnLoad(EventArgs e)
     {
-        if (Selected is { } endpoint)
-        {
-            _onAssignToProfile?.Invoke(endpoint);
-        }
+        base.OnLoad(e);
+        WindowFit.Fit(this, new Size(_buttons.GetPreferredSize(Size.Empty).Width, ClientSize.Height), growOnly: true);
+        CenterToScreen();
     }
 
-    private AudioEndpoint? Selected =>
-        _list.SelectedIndex >= 0 && _list.SelectedIndex < _endpoints.Count ? _endpoints[_list.SelectedIndex] : null;
-
-    // async void: a UI event handler; PlayConfirmationAsync never throws.
-    private async void PlaySelected()
+    private void RunOnSelected(Action<AudioEndpoint> action)
     {
-        if (Selected is not { } endpoint)
+        if (_list.Selected is { } endpoint)
         {
-            return;
+            action(endpoint);
         }
-
-        _playButton.Enabled = false;
-        _log.Info($"Audio test: playing tone on '{endpoint.FriendlyName}'.");
-
-        // Plays on a background thread, so the window stays responsive; re-enable the button when done.
-        await _audio.PlayConfirmationAsync(endpoint.Id);
-        _playButton.Enabled = true;
     }
 
     private void SetSelectedAsDefault()
     {
-        if (Selected is not { } endpoint)
+        if (_list.Selected is not { } endpoint)
         {
             return;
         }

@@ -87,7 +87,7 @@ internal sealed class LauncherCreator
     // A null target is a Profile Shortcut (switch only); otherwise a Launcher.
     private void Write(Profile profile, string? target, string? arguments, string name, IWin32Window? owner)
     {
-        var noun = target is null ? "Profile Shortcut" : "Launcher";
+        var noun = LaunchCommand.NounFor(target);
         var spec = LauncherSpecBuilder.Build(
             profile,
             target,

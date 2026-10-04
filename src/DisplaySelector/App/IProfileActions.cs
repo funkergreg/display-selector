@@ -36,4 +36,13 @@ internal interface IProfileActions
 
     /// <summary>Pick the executable first, then the profile it should switch to.</summary>
     void CreateLauncherAndAssign();
+
+    /// <summary>Opens Windows Settings ▸ Display.</summary>
+    void OpenDisplaySettings();
+
+    /// <summary>Opens (or brings forward) Profile Diagnostics for the profile.</summary>
+    void ShowDiagnostics(string id);
+
+    /// <summary>The window's selection changed (an open Profile Diagnostics follows it).</summary>
+    void SelectionChanged(string? id);
 }

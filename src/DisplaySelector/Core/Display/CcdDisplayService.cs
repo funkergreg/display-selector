@@ -51,46 +51,6 @@ public sealed class CcdDisplayService : IDisplayService
             : Array.Empty<DisplayTarget>();
     }
 
-    public bool ValidateCurrent()
-    {
-        if (!QueryActive(out var paths, out var modes))
-        {
-            return false;
-        }
-
-        var hr = CcdNative.SetDisplayConfig(
-            (uint)paths.Length,
-            paths,
-            (uint)modes.Length,
-            modes,
-            CcdNative.SDC_VALIDATE | CcdNative.SDC_USE_SUPPLIED_DISPLAY_CONFIG);
-
-        if (hr != 0)
-        {
-            _log.Error($"SetDisplayConfig(VALIDATE) failed: {hr} (0x{hr:X8}).");
-        }
-
-        return hr == 0;
-    }
-
-    public DisplayApplyResult ReapplyCurrent()
-    {
-        if (!QueryActive(out var paths, out var modes))
-        {
-            return DisplayApplyResult.Fail("QueryDisplayConfig failed.");
-        }
-
-        var hr = CcdNative.SetDisplayConfig((uint)paths.Length, paths, (uint)modes.Length, modes, ApplyFlags);
-        if (hr == 0)
-        {
-            _log.Info("Re-applied current display configuration (unstick).");
-            return DisplayApplyResult.Ok();
-        }
-
-        _log.Error($"ReapplyCurrent failed: {hr} (0x{hr:X8}).");
-        return DisplayApplyResult.Fail($"SetDisplayConfig returned {hr}.");
-    }
-
     public DisplayApplyResult Apply(DisplayConfig config)
     {
         if (string.IsNullOrEmpty(config.PathInfo) || string.IsNullOrEmpty(config.ModeInfo))
@@ -264,9 +224,7 @@ public sealed class CcdDisplayService : IDisplayService
             {
                 StableId = PortKey(name.outputTechnology, name.connectorInstance),
                 Edid = EdidKey(name),
-                Friendly = string.IsNullOrWhiteSpace(name.monitorFriendlyDeviceName)
-                    ? name.outputTechnology.ToString()
-                    : name.monitorFriendlyDeviceName,
+                Friendly = FriendlyName(name),
                 Primary = isPrimary,
                 Resolution = resolution,
                 Orientation = path.targetInfo.rotation.ToString(),
@@ -275,6 +233,11 @@ public sealed class CcdDisplayService : IDisplayService
 
         return targets;
     }
+
+    private static string FriendlyName(DISPLAYCONFIG_TARGET_DEVICE_NAME name) =>
+        string.IsNullOrWhiteSpace(name.monitorFriendlyDeviceName)
+            ? name.outputTechnology.ToString()
+            : name.monitorFriendlyDeviceName;
 
     private DISPLAYCONFIG_TARGET_DEVICE_NAME GetTargetName(LUID adapterId, uint id)
     {
@@ -317,7 +280,7 @@ public sealed class CcdDisplayService : IDisplayService
             return new List<DisplayTarget>();
         }
 
-        var connected = GetConnectedTargetIds();
+        var connected = GetConnectedDisplays().Select(d => d.StableId).ToHashSet();
         if (connected.Count == 0)
         {
             return new List<DisplayTarget>(); // query failed — don't guess (matches the previous failure behaviour)
@@ -327,39 +290,45 @@ public sealed class CcdDisplayService : IDisplayService
     }
 
     /// <summary>
-    /// Port keys of every display Windows reports as connected (active or not). <c>QDC_ALL_PATHS</c>
-    /// lists every source×target combination, so targets are de-duplicated before the per-target name
-    /// lookup; <c>targetAvailable</c> is false for a target with nothing attached — including a TV that
-    /// dropped HDMI hot-plug-detect when powered off, which is exactly the case worth reporting.
-    /// Empty if the query fails. (No active-paths fallback: that would bring back the false warning above.)
+    /// Every display Windows reports as connected (active or not). <c>QDC_ALL_PATHS</c> lists every
+    /// source×target combination, so targets are de-duplicated before the per-target name lookup;
+    /// <c>targetAvailable</c> is false for a target with nothing attached — including a TV that dropped
+    /// HDMI hot-plug-detect when powered off, which is exactly the case worth reporting. Empty if the
+    /// query fails. (No active-paths fallback: that would bring back the false warning above.)
     /// </summary>
-    public IReadOnlySet<string> GetConnectedTargetIds()
+    public IReadOnlyList<DisplayTarget> GetConnectedDisplays()
     {
-        var keys = new HashSet<string>();
+        var displays = new List<DisplayTarget>();
         if (!QueryPaths(CcdNative.QDC_ALL_PATHS, out var paths, out _))
         {
-            return keys;
+            return displays;
         }
 
         var seen = new HashSet<(LUID Adapter, uint Id)>();
+        var ports = new HashSet<string>();
         foreach (var path in paths)
         {
             var target = path.targetInfo;
-            if (target.targetAvailable == 0)
-            {
-                continue;
-            }
-            if (!seen.Add((target.adapterId, target.id)))
+            if (target.targetAvailable == 0 || !seen.Add((target.adapterId, target.id)))
             {
                 continue;
             }
 
             var name = GetTargetName(target.adapterId, target.id);
-            keys.Add(PortKey(name.outputTechnology, name.connectorInstance));
+            var key = PortKey(name.outputTechnology, name.connectorInstance);
+            if (ports.Add(key))
+            {
+                displays.Add(new DisplayTarget
+                {
+                    StableId = key,
+                    Edid = EdidKey(name),
+                    Friendly = FriendlyName(name),
+                });
+            }
         }
 
-        _log.Debug($"Connected display ports: {string.Join(", ", keys)}");
-        return keys;
+        _log.Debug($"Connected display ports: {string.Join(", ", displays.Select(d => d.StableId))}");
+        return displays;
     }
 
     // current: the live active paths, when the caller already queried them.

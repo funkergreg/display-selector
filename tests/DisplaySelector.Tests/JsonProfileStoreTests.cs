@@ -6,6 +6,20 @@ namespace DisplaySelector.Tests;
 public class JsonProfileStoreTests
 {
     [Fact]
+    public void Audio_only_is_derived_and_not_written_to_the_file()
+    {
+        using var tmp = new TempDir();
+        var file = tmp.File("profiles.json");
+        var doc = new ProfilesDocument();
+        doc.Profiles.Add(new Profile { Name = "Headset", Audio = new AudioConfig { EndpointId = "{hs}" } });
+
+        new JsonProfileStore(file, new NullLog()).Save(doc);
+
+        Assert.True(doc.Profiles[0].IsAudioOnly);
+        Assert.DoesNotContain("IsAudioOnly", File.ReadAllText(file), StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void Save_then_Load_roundtrips_full_profile_shape()
     {
         using var tmp = new TempDir();
