@@ -24,7 +24,7 @@ desktop.ini
 **/TODO.md
 **/DESIGN.md
 # Screenshots
-.docs/*.png
+.docs/**/*.png
 **/visual-review.png
 # logs
 *.log
