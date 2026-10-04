@@ -305,6 +305,7 @@ public sealed class CcdDisplayService : IDisplayService
         }
 
         var seen = new HashSet<(LUID Adapter, uint Id)>();
+        var ports = new HashSet<string>();
         foreach (var path in paths)
         {
             var target = path.targetInfo;
@@ -315,7 +316,7 @@ public sealed class CcdDisplayService : IDisplayService
 
             var name = GetTargetName(target.adapterId, target.id);
             var key = PortKey(name.outputTechnology, name.connectorInstance);
-            if (displays.All(d => d.StableId != key))
+            if (ports.Add(key))
             {
                 displays.Add(new DisplayTarget
                 {

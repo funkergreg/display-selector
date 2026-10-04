@@ -121,6 +121,12 @@ public sealed class CoreAudioService : IAudioService, IDisposable
         return new AudioEndpoint(device.ID, device.FriendlyName, true);
     }
 
+    public string? GetDefaultOutputDeviceId()
+    {
+        using var enumerator = new MMDeviceEnumerator();
+        return TryGetDefaultId(enumerator);
+    }
+
     public bool IsDeviceActive(string endpointId)
     {
         try

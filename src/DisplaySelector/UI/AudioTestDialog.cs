@@ -60,7 +60,7 @@ internal sealed class AudioTestDialog : Form
         Controls.Add(listPanel);
         Controls.Add(_buttons);
 
-        _playButton.Click += (_, _) => PlaySelected();
+        _playButton.Click += (_, _) => _list.PlaySelected(_playButton, _log, "Audio Tester");
         _setDefaultButton.Click += (_, _) => SetSelectedAsDefault();
         _assignButton.Click += (_, _) => RunOnSelected(onAssignToProfile);
         _assignAllButton.Click += (_, _) => RunOnSelected(onAssignToAllProfiles);
@@ -73,9 +73,25 @@ internal sealed class AudioTestDialog : Form
     private void LoadDevices()
     {
         _list.Reload();
+        UpdateButtons();
+    }
 
+    /// <summary>
+    /// Shows a live refresh's device list (the default moved, or a device came or went), so the
+    /// "(default)" marker stays current. Keeps the selected device; unchanged devices leave it alone.
+    /// </summary>
+    public void RefreshDevices(IReadOnlyList<AudioEndpoint> devices)
+    {
+        if (!IsDisposed && _list.ShowIfChanged(devices))
+        {
+            UpdateButtons();
+        }
+    }
+
+    private void UpdateButtons()
+    {
         var any = _list.Items.Count > 0;
-        _playButton.Enabled = any;
+        _playButton.Enabled = any && !_list.IsPlaying;
         _setDefaultButton.Enabled = any;
         _assignButton.Enabled = any;
         _assignAllButton.Enabled = any;
@@ -91,33 +107,15 @@ internal sealed class AudioTestDialog : Form
 
     private void RunOnSelected(Action<AudioEndpoint> action)
     {
-        if (Selected is { } endpoint)
+        if (_list.Selected is { } endpoint)
         {
             action(endpoint);
         }
     }
 
-    private AudioEndpoint? Selected => _list.Selected;
-
-    // async void: a UI event handler; PlayConfirmationAsync never throws.
-    private async void PlaySelected()
-    {
-        if (Selected is not { } endpoint)
-        {
-            return;
-        }
-
-        _playButton.Enabled = false;
-        _log.Info($"Audio test: playing tone on '{endpoint.FriendlyName}'.");
-
-        // Plays on a background thread, so the window stays responsive; re-enable the button when done.
-        await _audio.PlayConfirmationAsync(endpoint.Id);
-        _playButton.Enabled = true;
-    }
-
     private void SetSelectedAsDefault()
     {
-        if (Selected is not { } endpoint)
+        if (_list.Selected is not { } endpoint)
         {
             return;
         }

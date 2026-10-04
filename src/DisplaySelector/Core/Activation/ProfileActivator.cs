@@ -103,7 +103,7 @@ public sealed class ProfileActivator
     /// asks about one specific profile, so profiles differing only in such details are told apart.
     /// A profile with nothing saved is never live.
     /// </summary>
-    public bool IsLive(Profile profile) => IsLive(profile, () => _audio.GetDefaultOutputDevice()?.Id);
+    public bool IsLive(Profile profile) => IsLive(profile, () => _audio.GetDefaultOutputDeviceId());
 
     /// <summary>
     /// <see cref="IsLive(Profile)"/> against a default audio device already read (the live-state tracker's

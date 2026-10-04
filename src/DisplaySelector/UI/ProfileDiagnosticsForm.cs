@@ -29,7 +29,7 @@ internal sealed class ProfileDiagnosticsForm : Form
         Padding = new Padding(8),
     };
     private readonly Panel _body = new() { Dock = DockStyle.Fill, Padding = new Padding(8) };
-    private string? _profileId;
+    private string _profileId;
     private string _report = string.Empty;
     private bool _fitted;
 
@@ -61,7 +61,8 @@ internal sealed class ProfileDiagnosticsForm : Form
         Controls.Add(_buttons);
 
         _copyButton.Click += (_, _) => copy(_report); // the built text: the box would hand back LF-only line ends
-        ShowProfile(profileId); // before the first fit, so the window opens at its final size
+        _profileId = profileId;
+        RefreshReport(); // before the first fit, so the window opens at its final size
     }
 
     protected override void OnLoad(EventArgs e)
@@ -90,7 +91,7 @@ internal sealed class ProfileDiagnosticsForm : Form
     /// </summary>
     public void RefreshReport()
     {
-        if (IsDisposed || _profileId is null)
+        if (IsDisposed)
         {
             return;
         }

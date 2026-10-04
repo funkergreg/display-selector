@@ -77,7 +77,7 @@ public sealed class AudioSwitchConfirmer
             try
             {
                 active = _audio.IsDeviceActive(endpointId);
-                isDefault = active && _audio.GetDefaultOutputDevice()?.Id == endpointId;
+                isDefault = active && _audio.GetDefaultOutputDeviceId() == endpointId;
             }
             catch (Exception ex)
             {

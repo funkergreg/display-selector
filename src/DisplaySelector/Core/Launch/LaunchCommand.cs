@@ -79,6 +79,9 @@ public sealed record LaunchCommand(string ProfileRef, string? Target = null, str
         return string.Join(' ', parts);
     }
 
+    /// <summary>The app term for a shortcut with this target: no target is a Profile Shortcut (switch only).</summary>
+    public static string NounFor(string? target) => target is null ? "Profile Shortcut" : "Launcher";
+
     /// <summary>A short, human-readable name for the launch target (file name, or the URI as-is).</summary>
     public string? TargetDisplayName => Target is null ? null : DisplayNameOf(Target);
 

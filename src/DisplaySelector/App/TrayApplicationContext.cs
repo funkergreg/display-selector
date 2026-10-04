@@ -60,6 +60,9 @@ internal sealed class TrayApplicationContext : ApplicationContext, IProfileActio
     private readonly SingleInstanceWindow<AudioTestDialog> _audioTestWindow = new();
     private readonly SingleInstanceWindow<DisplayTestDialog> _displayTestWindow = new();
     private readonly SingleInstanceWindow<ProfileDiagnosticsForm> _profileDiagnosticsWindow = new();
+
+    // The desktop items Profile Diagnostics lists for the Profile it shows (see BuildProfileReport).
+    private (string ProfileId, IReadOnlyList<string> Paths)? _diagnosticsShortcuts;
     private readonly IReadOnlyList<string> _startupArgs;
     private readonly LatestOperation _launch = new();
     private readonly LatestOperation _audioConfirm = new();
@@ -89,7 +92,16 @@ internal sealed class TrayApplicationContext : ApplicationContext, IProfileActio
         _activator = activator;
         _autoStart = autoStart;
         _launchCoordinator = launchCoordinator;
-        _launcherCreator = new LauncherCreator(shortcutWriter, shortcutRegistry, logger, ShowBalloon, ReportFailure);
+        _launcherCreator = new LauncherCreator(
+            shortcutWriter,
+            shortcutRegistry,
+            logger,
+            (message, icon) =>
+            {
+                ShowBalloon(message, icon);
+                OnShortcutsChanged(); // a Launcher or Profile Shortcut may have been created
+            },
+            ReportFailure);
         _shortcutCleanup = new ProfileShortcutCleanup(shortcutRegistry, shortcutWriter, logger);
         _audioConfirmer = new AudioSwitchConfirmer(audioService, logger);
         _startupArgs = startupArgs;
@@ -189,6 +201,7 @@ internal sealed class TrayApplicationContext : ApplicationContext, IProfileActio
 
     private void RebuildMenu()
     {
+        _diagnosticsShortcuts = null; // the Profiles changed (renamed, deleted, …): re-find their desktop items
         _liveState.Refresh();
         var old = _tray.ContextMenuStrip;
         _tray.ContextMenuStrip = BuildMenu();
@@ -228,11 +241,23 @@ internal sealed class TrayApplicationContext : ApplicationContext, IProfileActio
         RefreshDiagnosticWindows();
     }
 
-    // The Display Tester and Profile Diagnostics show live state; re-read it when they're open.
+    // The Display Tester, Profile Diagnostics and Audio Tester show live state; re-read it when they're open.
     private void RefreshDiagnosticWindows()
     {
         _displayTestWindow.Current?.RefreshDisplays();
         _profileDiagnosticsWindow.Current?.RefreshReport();
+
+        if (_audioTestWindow.Current is { } audioTester && _liveState.Snapshot != LiveSnapshot.Empty)
+        {
+            try
+            {
+                audioTester.RefreshDevices(_liveState.Snapshot.AudioDevices);
+            }
+            catch (Exception ex)
+            {
+                _log.Debug($"Audio Tester refresh failed ({ex.Message}); keeping its list.");
+            }
+        }
     }
 
     private Profile? ActiveProfile => _liveState.ActiveProfileId is { } id ? FindProfile(id) : null;
@@ -675,6 +700,17 @@ internal sealed class TrayApplicationContext : ApplicationContext, IProfileActio
 
         var hotkeyNote = profile.Hotkey is null ? string.Empty : $" ({HotkeyCodec.Format(profile.Hotkey)})";
         _log.Info($"Saved {savedNoun} '{name}'{hotkeyNote}.");
+
+        // The auto-assigned key may be owned by another app (e.g. Steam's F12): say so, don't imply it works.
+        if (IsHotkeyInactive(profile))
+        {
+            ShowBalloon(
+                $"Saved {savedNoun} '{name}'. Its hotkey {HotkeyCodec.Format(profile.Hotkey)} is used by another app, " +
+                "so it won't work; choose Set hotkey… to pick another.",
+                ToolTipIcon.Warning);
+            return;
+        }
+
         ShowBalloon($"Saved {savedNoun} '{name}'{hotkeyNote}.", ToolTipIcon.Info);
     }
 
@@ -739,7 +775,7 @@ internal sealed class TrayApplicationContext : ApplicationContext, IProfileActio
     {
         _liveState.Refresh();
         var switching = profiles.Any(p => p.Id == _liveState.ActiveProfileId) &&
-                        _audioService.GetDefaultOutputDevice()?.Id != device.Id;
+                        _liveState.Snapshot.DefaultAudioId != device.Id;
         foreach (var profile in profiles)
         {
             profile.Audio = new AudioConfig { EndpointId = device.Id, FriendlyName = device.FriendlyName };
@@ -874,6 +910,7 @@ internal sealed class TrayApplicationContext : ApplicationContext, IProfileActio
         PersistAndRefresh(reregisterHotkeys: true);
 
         var removed = answer == DialogResult.Yes ? _shortcutCleanup.Delete(linked) : 0;
+        OnShortcutsChanged();
         ShowBalloon(
             removed > 0
                 ? $"Deleted Profile '{profile.Name}' and {removed} desktop item{(removed == 1 ? string.Empty : "s")}."
@@ -962,7 +999,7 @@ internal sealed class TrayApplicationContext : ApplicationContext, IProfileActio
         }
 
         // The just-assigned hotkey may have failed to register (owned by another app).
-        if (profile.Hotkey is not null && !_hotkeyIdToProfileId.ContainsValue(profile.Id))
+        if (IsHotkeyInactive(profile))
         {
             MessageBox.Show(
                 $"'{HotkeyCodec.Format(profile.Hotkey)}' could not be registered — another application is already using it. " +
@@ -1024,7 +1061,7 @@ internal sealed class TrayApplicationContext : ApplicationContext, IProfileActio
 
         if (outcome.Profile is null)
         {
-            var missing = $"This Launcher's Profile '{command.ProfileRef}' no longer exists";
+            var missing = $"This {LaunchCommand.NounFor(command.Target)}'s Profile '{command.ProfileRef}' no longer exists";
             var message = !outcome.LaunchAttempted
                 ? $"{missing}."
                 : outcome.Launched
@@ -1149,6 +1186,7 @@ internal sealed class TrayApplicationContext : ApplicationContext, IProfileActio
     private void ShowProfileDiagnostics(string id)
     {
         _log.Info("Opening Profile Diagnostics window.");
+        _diagnosticsShortcuts = null; // an explicit request re-finds the desktop items too
 
         // An explicit request re-reads the live state first (in case Windows didn't announce a change), so
         // the window opens on (or an open one shows) fresh state.
@@ -1168,6 +1206,13 @@ internal sealed class TrayApplicationContext : ApplicationContext, IProfileActio
         }
     }
 
+    // Desktop items were created or deleted: an open Profile Diagnostics re-finds them.
+    private void OnShortcutsChanged()
+    {
+        _diagnosticsShortcuts = null;
+        _profileDiagnosticsWindow.Current?.RefreshReport();
+    }
+
     // Profile Diagnostics text: what the profile saved next to the live state (the tracker's snapshot, so it
     // agrees with the check mark and the Display Tester); null if it's gone.
     private string? BuildProfileReport(string id)
@@ -1179,6 +1224,13 @@ internal sealed class TrayApplicationContext : ApplicationContext, IProfileActio
 
         try
         {
+            // Finding the desktop items reads every tracked .lnk, and a hardware change can't change them:
+            // keep them for the shown Profile until the user changes something (or picks another Profile).
+            if (_diagnosticsShortcuts is not { } shortcuts || shortcuts.ProfileId != id)
+            {
+                _diagnosticsShortcuts = shortcuts = (id, _shortcutCleanup.Find(profile, _document.Profiles));
+            }
+
             var live = _liveState.Snapshot;
             return ProfileReport.Build(
                 profile,
@@ -1186,7 +1238,7 @@ internal sealed class TrayApplicationContext : ApplicationContext, IProfileActio
                 live.ActiveDisplays,
                 live.ConnectedDisplays,
                 live.AudioDevices,
-                _shortcutCleanup.Find(profile, _document.Profiles));
+                shortcuts.Paths);
         }
         catch (Exception ex)
         {
@@ -1221,6 +1273,10 @@ internal sealed class TrayApplicationContext : ApplicationContext, IProfileActio
             }
         }
     }
+
+    // Saved but not registered: RegisterAllHotkeys couldn't claim it (another app owns the combination).
+    private bool IsHotkeyInactive(Profile profile) =>
+        profile.Hotkey is not null && !_hotkeyIdToProfileId.ContainsValue(profile.Id);
 
     private void OnHotkeyPressed(int hotkeyId)
     {
@@ -1287,6 +1343,8 @@ internal sealed class TrayApplicationContext : ApplicationContext, IProfileActio
     {
         try
         {
+            // Re-read first, so the report's "Active Profile" agrees with the displays and audio it lists.
+            RefreshLiveState();
             CopyToClipboard(DiagnosticsReport.Build(_displayService, _audioService, ActiveProfile?.Name), "Diagnostics");
         }
         catch (Exception ex)
@@ -1334,6 +1392,7 @@ internal sealed class TrayApplicationContext : ApplicationContext, IProfileActio
     {
         try
         {
+            RefreshLiveState(); // as in Copy diagnostics: "Active Profile" matches the listed hardware
             var diagnostics = IssueReporter.ScrubUser(DiagnosticsReport.Build(_displayService, _audioService, ActiveProfile?.Name));
 
             // Full (redacted) log goes to the clipboard; a short tail is inlined in the issue body

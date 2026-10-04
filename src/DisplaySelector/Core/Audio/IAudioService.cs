@@ -12,6 +12,12 @@ public interface IAudioService
     /// <summary>The current default render endpoint (multimedia role), or null if none.</summary>
     AudioEndpoint? GetDefaultOutputDevice();
 
+    /// <summary>
+    /// Just the default render endpoint's id, or null: for live checks that compare ids, so the real
+    /// service can skip reading the friendly name.
+    /// </summary>
+    string? GetDefaultOutputDeviceId() => GetDefaultOutputDevice()?.Id;
+
     /// <summary>Whether the endpoint exists and is active (plugged in / powered on). Never throws.</summary>
     bool IsDeviceActive(string endpointId);
 

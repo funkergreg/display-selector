@@ -12,11 +12,12 @@ namespace DisplaySelector.UI;
 /// </summary>
 internal static class ProfileGlyphs
 {
-    private const string Monitor = ""; // TVMonitor
-    private const string Speaker = ""; // Volume
+    private const string Monitor = "\uE7F4"; // TVMonitor
+    private const string Speaker = "\uE767"; // Volume
 
-    private static readonly Color FullColor = Color.FromArgb(0x00, 0x72, 0xB2);      // blue, 5.2:1 on white
-    private static readonly Color AudioOnlyColor = Color.FromArgb(0xC0, 0x50, 0x00); // dark vermillion, 4.8:1
+    // Brushes, not colors: list rows repaint often, so don't allocate one per paint.
+    private static readonly Brush FullBrush = new SolidBrush(Color.FromArgb(0x00, 0x72, 0xB2));      // blue, 5.2:1 on white
+    private static readonly Brush AudioOnlyBrush = new SolidBrush(Color.FromArgb(0xC0, 0x50, 0x00)); // dark vermillion, 4.8:1
 
     // Segoe Fluent Icons ships with Windows 11; Segoe MDL2 Assets (same code points) is the fallback.
     private static readonly FontFamily? IconFamily = FindFamily("Segoe Fluent Icons", "Segoe MDL2 Assets");
@@ -39,7 +40,7 @@ internal static class ProfileGlyphs
             var bitmap = new Bitmap(px, px);
             using (var graphics = Graphics.FromImage(bitmap))
             {
-                Render(graphics, profile, new Rectangle(0, 0, px, px), ColorOf(profile));
+                Render(graphics, profile, new Rectangle(0, 0, px, px), BrushOf(profile));
             }
             Cache[key] = image = bitmap;
         }
@@ -64,21 +65,27 @@ internal static class ProfileGlyphs
             e.Graphics,
             profile,
             new Rectangle(bounds.X + left, bounds.Y + (bounds.Height - glyph) / 2, glyph, glyph),
-            selected ? SystemColors.HighlightText : ColorOf(profile));
+            selected ? SystemBrushes.HighlightText : BrushOf(profile));
 
-        var textLeft = left + glyph + list.LogicalToDeviceUnits(6);
+        DrawLabel(e, label, left + glyph + list.LogicalToDeviceUnits(6), selected ? SystemColors.HighlightText : SystemColors.WindowText);
+    }
+
+    /// <summary>A row's label, <paramref name="left"/> device px in (also the lists' "no Profiles" row).</summary>
+    public static void DrawLabel(DrawItemEventArgs e, string label, int left, Color color)
+    {
+        var bounds = e.Bounds;
         TextRenderer.DrawText(
             e.Graphics,
             label,
             e.Font,
-            new Rectangle(bounds.X + textLeft, bounds.Y, bounds.Width - textLeft, bounds.Height),
-            selected ? SystemColors.HighlightText : SystemColors.WindowText,
+            new Rectangle(bounds.X + left, bounds.Y, bounds.Width - left, bounds.Height),
+            color,
             TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
     }
 
-    private static Color ColorOf(Profile profile) => profile.IsAudioOnly ? AudioOnlyColor : FullColor;
+    private static Brush BrushOf(Profile profile) => profile.IsAudioOnly ? AudioOnlyBrush : FullBrush;
 
-    private static void Render(Graphics graphics, Profile profile, Rectangle cell, Color color)
+    private static void Render(Graphics graphics, Profile profile, Rectangle cell, Brush brush)
     {
         if (IconFamily is null)
         {
@@ -91,7 +98,6 @@ internal static class ProfileGlyphs
             Fonts[px] = font = new Font(IconFamily, px * 0.8f, GraphicsUnit.Pixel);
         }
 
-        using var brush = new SolidBrush(color);
         var oldHint = graphics.TextRenderingHint;
         var oldSmoothing = graphics.SmoothingMode;
         graphics.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;

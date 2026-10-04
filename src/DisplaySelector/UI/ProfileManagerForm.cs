@@ -49,6 +49,7 @@ internal sealed class ProfileManagerForm : Form
     // What's on screen: profiles in display order (empty when there are no profiles).
     private List<Profile> _profiles = new();
     private string? _activeId;
+    private bool _refreshing; // RefreshProfiles is rebuilding the list: not the user selecting
 
     public ProfileManagerForm(IProfileActions actions)
     {
@@ -72,7 +73,13 @@ internal sealed class ProfileManagerForm : Form
         _list.SelectedIndexChanged += (_, _) =>
         {
             UpdateButtons();
-            _actions.SelectionChanged(SelectedId);
+
+            // Only a real selection moves Profile Diagnostics: a live refresh re-selects the same row, and
+            // must not pull a diagnostics window opened from the tray back to this selection.
+            if (!_refreshing)
+            {
+                _actions.SelectionChanged(SelectedId);
+            }
         };
         _list.DoubleClick += (_, _) => RunOnSelected(_actions.Activate);
         _list.KeyDown += (_, e) =>
@@ -188,21 +195,29 @@ internal sealed class ProfileManagerForm : Form
         _profiles = profiles.ToList();
         _activeId = _actions.ActiveProfileId;
 
-        _list.BeginUpdate();
-        _list.Items.Clear();
-        if (profiles.Count == 0)
+        _refreshing = true;
+        try
         {
-            _list.Items.Add(ProfileLabels.NoProfiles);
-        }
-        else
-        {
-            foreach (var profile in profiles)
+            _list.BeginUpdate();
+            _list.Items.Clear();
+            if (profiles.Count == 0)
             {
-                _list.Items.Add(ProfileLabels.Label(profile));
+                _list.Items.Add(ProfileLabels.NoProfiles);
             }
+            else
+            {
+                foreach (var profile in profiles)
+                {
+                    _list.Items.Add(ProfileLabels.Label(profile));
+                }
+            }
+            _list.SelectedIndex = selected is null ? -1 : newIds.IndexOf(selected);
+            _list.EndUpdate();
         }
-        _list.SelectedIndex = selected is null ? -1 : newIds.IndexOf(selected);
-        _list.EndUpdate();
+        finally
+        {
+            _refreshing = false;
+        }
 
         UpdateButtons();
     }
@@ -262,13 +277,7 @@ internal sealed class ProfileManagerForm : Form
         if (_profiles.Count == 0)
         {
             e.Graphics.FillRectangle(SystemBrushes.Window, bounds); // never looks selectable
-            TextRenderer.DrawText(
-                e.Graphics,
-                ProfileLabels.NoProfiles,
-                e.Font,
-                new Rectangle(bounds.X + gutter, bounds.Y, bounds.Width - gutter, bounds.Height),
-                SystemColors.GrayText,
-                TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
+            ProfileGlyphs.DrawLabel(e, ProfileLabels.NoProfiles, gutter, SystemColors.GrayText);
             return;
         }
 

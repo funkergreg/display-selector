@@ -29,6 +29,7 @@ internal sealed class ListPickerDialog : Form
         MaximizeBox = false;
         ClientSize = new Size(380, 260);
 
+        // Items hold the label strings (the rows' accessible names); _profiles holds the matching Profiles.
         _list.DrawItem += DrawRow;
         foreach (var profile in profiles)
         {
@@ -97,7 +98,7 @@ internal sealed class ListPickerDialog : Form
         }
 
         e.DrawBackground();
-        ProfileGlyphs.DrawRow(_list, e, _profiles[e.Index], ProfileLabels.Label(_profiles[e.Index]), _list.LogicalToDeviceUnits(4));
+        ProfileGlyphs.DrawRow(_list, e, _profiles[e.Index], (string)_list.Items[e.Index], _list.LogicalToDeviceUnits(4));
         e.DrawFocusRectangle();
     }
 }

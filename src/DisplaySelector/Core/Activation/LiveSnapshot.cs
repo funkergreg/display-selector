@@ -31,7 +31,7 @@ public sealed class LiveSnapshot
     {
         _display = display;
         _audio = audio;
-        DefaultAudioId = audio.GetDefaultOutputDevice()?.Id;
+        DefaultAudioId = audio.GetDefaultOutputDeviceId();
         ActiveDisplays = display.GetCurrentDisplays();
     }
 
