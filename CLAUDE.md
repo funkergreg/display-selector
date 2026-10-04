@@ -12,6 +12,7 @@ A lightweight, mostly-idle **Windows 11** system-tray utility (open-sourced). It
 - **Windows 11 only** is the test target. Keep code portable (platform behind interfaces) but don't spend effort on other-OS/older-Windows support unless asked.
 - **Platform code lives behind an interface.** Anything touching Win32/COM goes behind `IDisplayService` / `IAudioService` / `IHotkeyService` / `INotificationService` / `IAutoStartManager` / `IShortcutWriter` / `IProcessLauncher` / `ILog`, so it stays mockable and swappable.
 - Prefer few dependencies. Current allowed set: **NAudio** (audio enumeration + WASAPI test playback) and **Microsoft.Toolkit.Uwp.Notifications** (Win11 toasts via the unpackaged compat layer). Logger is hand-rolled. Clear new dependencies with the developer first.
+- Screenshots and other images in `.docs` are for  and tests; these should NEVER be committed.  Images to be used in the app or actual documentaton (README.md, etc.) go in root-level `assets/`
 
 ## Commands
 
